@@ -24,7 +24,30 @@ def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
         # ==========================================
         # 1. GERAR RESUMO (Foco em Retenção Recente)
         # ==========================================
-        if action_type == "/resumir":
+        if action_type == "/ouvir":
+            materiais = db.query(Conteudo)\
+                          .filter_by(materia_id=sessao.materia_ativa)\
+                          .order_by(Conteudo.id.desc())\
+                          .limit(3).all() # Pegamos os 3 últimos para o áudio não ficar gigante
+
+            if materiais:
+                send_message(chat_id, "🎙️ Sintetizando sua revisão em áudio...")
+                
+                # Compila o texto para a voz
+                texto_para_voz = "Revisão da matéria. " + " ".join([c.texto for c in materiais])
+                
+                # Gera o arquivo mp3
+                caminho_audio = gerar_audio_do_texto(texto_para_voz, user_id)
+                
+                if caminho_audio:
+                    send_voice(chat_id, caminho_audio)
+                    os.remove(caminho_audio) # Limpeza de disco imediata após envio
+                else:
+                    send_message(chat_id, "❌ Erro ao gerar áudio.")
+            else:
+                send_message(chat_id, "📭 Sem conteúdo para converter em voz.")
+        
+        elif action_type == "/resumir":
             # Puxa apenas os 5 últimos blocos salvos (limitando o payload para a IA)
             materiais = db.query(Conteudo)\
                           .filter_by(materia_id=sessao.materia_ativa)\

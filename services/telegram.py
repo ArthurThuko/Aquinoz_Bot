@@ -18,3 +18,11 @@ def send_message(chat_id, text, reply_markup=None):
         print(f"Erro do Telegram: {response.text}")
         
     return response
+
+def send_voice(chat_id, file_path):
+    url = f"{BASE_URL}/sendVoice"
+    with open(file_path, 'rb') as voice_file:
+        payload = {"chat_id": chat_id}
+        files = {"voice": voice_file}
+        return requests.post(url, data=payload, files=files)
+    
