@@ -53,7 +53,6 @@ def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
                 prompt = "Com base no texto fornecido, crie um resumo direto ao ponto em poucos tópicos curtos. Use linguagem simples."
                 res = pedir_ia(prompt, texto_compilado)
                 
-                # Botão para ouvir apenas este resumo (Economiza processamento e não buga)
                 keyboard = {
                     "inline_keyboard": [[
                         {"text": "🔊 Ouvir este resumo", "callback_data": "tts_agora"}
@@ -67,7 +66,6 @@ def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
         # 2. GERAR VOZ SOB DEMANDA
         # ==========================================
         elif action_type == "tts_agora":
-            # Aqui o payload é o texto do resumo gerado
             send_message(chat_id, "🎙️ <b>Gravando áudio do resumo...</b>")
             caminho_audio = gerar_audio_do_texto(payload, user_id)
             
@@ -79,7 +77,6 @@ def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
                 send_message(chat_id, "❌ Erro ao gerar áudio.")
 
         elif action_type == "/ouvir":
-            # O /ouvir do menu lê os últimos conteúdos (Limitado a 2 para não bugar o Edge-TTS)
             materiais = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).order_by(Conteudo.id.desc()).limit(2).all()
             if materiais:
                 send_message(chat_id, "🤖 Gerando resumo...")
@@ -159,9 +156,7 @@ def webhook():
     db = SessionLocal()
     try:
         data = request.json
-        mensagem_original_texto = ""
 
-        # Callback de Botões
         if "callback_query" in data:
             callback = data["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
@@ -191,11 +186,12 @@ def webhook():
             db.commit()
             db.refresh(sessao)
 
-        # --- MENU ---
-        if text in ["/start", "/menu"]:
+        # MENU CENTRAL
+        def mostrar_menu():
             keyboard = {
                 "inline_keyboard": [
                     [{"text": "📚 Matérias", "callback_data": "listar_materias"}, {"text": "➕ Nova", "callback_data": "nova_materia"}],
+                    [{"text": "🗑️ Remover", "callback_data": "remover_materia"}],
                     [{"text": "📊 Resumir", "callback_data": "/resumir"}, {"text": "📝 Questões", "callback_data": "/gerar_questoes"}],
                     [{"text": "🎙️ Ouvir Revisão", "callback_data": "/ouvir"}, {"text": "🔍 Perguntar", "callback_data": "modo_pergunta"}],
                     [{"text": "📌 Status", "callback_data": "/status"}, {"text": "💡 Ajuda", "callback_data": "ajuda_bot"}]
@@ -203,66 +199,69 @@ def webhook():
             }
             send_message(chat_id, "📚 <b>Menu Principal</b>\nO que vamos estudar agora?", keyboard)
 
-        # --- AÇÕES DOS BOTÕES DE MENU ---
+        if text in ["/start", "/menu"]:
+            mostrar_menu()
+
+        elif text == "remover_materia":
+            mats = db.query(Materia).filter_by(user_id=user.id).all()
+            if mats:
+                keyboard = {"inline_keyboard": [[{"text": f"❌ {m.nome}", "callback_data": f"del_{m.id}"}] for m in mats]}
+                send_message(chat_id, "🗑️ Escolha a matéria para remover:", keyboard)
+            else:
+                send_message(chat_id, "📭 Nenhuma matéria.")
+                mostrar_menu()
+
+        elif text.startswith("del_"):
+            m_id = int(text.split("_")[1])
+            materia = db.query(Materia).get(m_id)
+            if materia:
+                db.delete(materia)
+                db.commit()
+                send_message(chat_id, f"✅ Matéria <b>{materia.nome}</b> removida!")
+            else:
+                send_message(chat_id, "❌ Não encontrada.")
+            mostrar_menu()
+
         elif text == "nova_materia":
-            send_message(chat_id, "✍️ Para criar uma matéria, digite:\n/adc NomeDaMateria")
+            send_message(chat_id, "✍️ Use /adc NomeDaMateria")
 
-        elif text in ["/ajuda", "ajuda_bot"]:
-            ajuda_texto = (
-                "💡 <b>Como usar o bot:</b>\n\n"
-                "1️⃣ <b>Crie:</b> Digite /adc Nome\n"
-                "2️⃣ <b>Selecione:</b> Abra as /materias e escolha o foco\n"
-                "3️⃣ <b>Envie:</b> Mande links ou textos soltos\n"
-                "4️⃣ <b>Estude:</b> Use o /menu para resumos, quizes ou áudios!"
-            )
-            send_message(chat_id, ajuda_texto)
-
-        elif text == "modo_pergunta":
-            send_message(chat_id, "🧐 <b>Modo Pergunta Ativado!</b>\nDigite <b>/pergunta</b> e sua dúvida.\n\nExemplo: <code>/pergunta O que são juros?</code>")
-
-        # --- O STATUS VOLTOU AQUI ---
-        elif text == "/status":
-            m = db.query(Materia).get(sessao.materia_ativa) if sessao.materia_ativa else None
-            send_message(chat_id, f"📌 Foco atual: <b>{m.nome if m else 'Nenhum'}</b>")
-
-        # --- Comandos de Texto Diretos ---
         elif text.startswith("/adc "):
             nome = text.replace("/adc ", "").strip()
             if nome:
                 db.add(Materia(nome=nome, user_id=user.id))
                 db.commit()
                 send_message(chat_id, f"✅ Matéria <b>{nome}</b> criada!")
-            else:
-                send_message(chat_id, "⚠️ Digite um nome após o /adc")
+            mostrar_menu()
 
         elif text == "listar_materias" or text == "/materias":
             mats = db.query(Materia).filter_by(user_id=user.id).all()
             if mats:
                 keyboard = {"inline_keyboard": [[{"text": m.nome, "callback_data": f"use_{m.id}"}] for m in mats]}
-                send_message(chat_id, "📚 Selecione uma matéria:", keyboard)
+                send_message(chat_id, "📚 Selecione:", keyboard)
             else:
-                send_message(chat_id, "📭 Nenhuma matéria. Use /adc Nome")
+                send_message(chat_id, "📭 Nenhuma matéria.")
 
         elif text.startswith("use_"):
             m_id = int(text.split("_")[1])
-            sessao.materia_ativa = m_id; db.commit()
+            sessao.materia_ativa = m_id
+            db.commit()
             m = db.query(Materia).get(m_id)
-            send_message(chat_id, f"🎯 Foco em: <b>{m.nome}</b>")
+            send_message(chat_id, f"🎯 Foco: <b>{m.nome}</b>")
+            mostrar_menu()
 
-        # --- Disparo de Threads (IA, Scraper e VOZ) ---
         elif text in ["/resumir", "/gerar_questoes", "/ouvir"]:
             if sessao.materia_ativa:
                 threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, text)).start()
             else:
                 send_message(chat_id, "⚠️ Selecione uma matéria.")
+                mostrar_menu()
 
-        # --- AUTO SAVE ---
         elif not text.startswith("/"):
-<<<<<<< Updated upstream
             if sessao.materia_ativa:
                 threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, "auto_save", text)).start()
             else:
-                send_message(chat_id, "⚠️ Escolha uma matéria primeiro.")
+                send_message(chat_id, "⚠️ Escolha uma matéria.")
+                mostrar_menu()
 
     except Exception as e:
         logger.error(f"Erro: {e}")
@@ -270,6 +269,7 @@ def webhook():
         db.close()
 
     return jsonify({"status": "ok"}), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
