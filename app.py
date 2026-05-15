@@ -1,146 +1,171 @@
-from flask import Flask, request
+import threading
 import logging
-from models import SessionLocal, User, Materia, Conteudo, Sessao
+from flask import Flask, request, jsonify
+from sqlalchemy import text as sqlalchemy_text
+
+# Imports de Domínio e Infraestrutura
+from models import SessionLocal, User, Materia, Conteudo, Sessao, engine
 from services.telegram import send_message
 from services.scraper import extrair_texto_da_url
 from services.ai_assistant import pedir_ia
 
+# Configuração de Logs Profissional
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
-# Configuração de Log para você ver o erro real no terminal
-logging.basicConfig(level=logging.INFO)
+# Otimização de Performance do Banco (Modo WAL)
+with engine.connect() as conn:
+    conn.execute(sqlalchemy_text("PRAGMA journal_mode=WAL;"))
 
-def get_session_data(db, chat_id):
-    user = db.query(User).filter_by(telegram_id=str(chat_id)).first()
-    if not user:
-        user = User(telegram_id=str(chat_id))
-        db.add(user)
-        db.commit()
-    
-    sessao = db.query(Sessao).filter_by(user_id=user.id).first()
-    if not sessao:
-        sessao = Sessao(user_id=user.id)
-        db.add(sessao)
-        db.commit()
-    return user, sessao
+# --- CAMADA DE SERVIÇOS EM BACKGROUND ---
+
+def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
+    """
+    Worker independente: Gerencia seu próprio ciclo de vida e banco de dados.
+    Isso evita vazamento de memória e deadlocks entre threads.
+    """
+    db = SessionLocal()
+    try:
+        sessao = db.query(Sessao).get(sessao_id)
+        if not sessao: return
+
+        if action_type == "/resumir":
+            materiais = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).all()
+            if materiais:
+                send_message(chat_id, "🤖 *Gerando resumo analítico...*")
+                corpo_texto = " ".join([c.texto for c in materiais])
+                res = pedir_ia("Resumo executivo em tópicos curtos.", corpo_texto)
+                send_message(chat_id, res)
+            else:
+                send_message(chat_id, "⚠️ Não há conteúdo salvo para esta matéria.")
+
+        elif action_type == "/gerar_questoes":
+            materiais = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).all()
+            if materiais:
+                send_message(chat_id, "🤖 *Preparando quiz...*")
+                corpo_texto = " ".join([c.texto for c in materiais])
+                prompt = (
+                    "Crie 3 questões de múltipla escolha. No final, escreva 'GABARITO:' "
+                    "e oculte as respostas com <tg-spoiler>RESPOSTA</tg-spoiler>."
+                )
+                res = pedir_ia(prompt, corpo_texto)
+                send_message(chat_id, res)
+
+        elif action_type == "auto_save":
+            if payload.startswith("http"):
+                send_message(chat_id, "🌐 *Processando link...*")
+                texto = extrair_texto_da_url(payload)
+                tipo = "link"
+            else:
+                texto, tipo = payload, "texto"
+            
+            if texto:
+                db.add(Conteudo(texto=texto, tipo=tipo, materia_id=sessao.materia_ativa))
+                db.commit()
+                send_message(chat_id, "✅ Conteúdo indexado com sucesso.")
+
+    except Exception as e:
+        logger.error(f"Falha na Task [{action_type}]: {e}")
+        send_message(chat_id, "❌ Erro ao processar sua solicitação.")
+    finally:
+        db.close()
+
+# --- CONTROLADOR (WEBHOOK) ---
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    """
+    Entrypoint: Valida a requisição e delega para o background.
+    Garante resposta 200 OK imediata para evitar retentativas do Telegram.
+    """
     db = SessionLocal()
     try:
         data = request.json
-        message = data.get("message", {})
-        chat_id = message.get("chat", {}).get("id")
-        text = message.get("text") # Removido o padrão "" para detectar se é texto
+        msg = data.get("message", {})
+        chat_id = msg.get("chat", {}).get("id")
+        text = msg.get("text")
 
         if not chat_id or not text:
-            return {"ok": True}
+            return jsonify({"status": "ignored"}), 200
 
-        user, sessao = get_session_data(db, chat_id)
+        # 1. Recuperação de Contexto (Rápido)
+        user = db.query(User).filter_by(telegram_id=str(chat_id)).one_or_none()
+        if not user:
+            user = User(telegram_id=str(chat_id))
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        
+        sessao = db.query(Sessao).filter_by(user_id=user.id).one_or_none()
+        if not sessao:
+            sessao = Sessao(user_id=user.id)
+            db.add(sessao)
+            db.commit()
+            db.refresh(sessao)
 
-        # --- MENU ---
+        # 2. Roteamento de Comandos
         if text in ["/start", "/menu"]:
             menu = (
-                "📚 ASSISTENTE DE ESTUDOS\n\n"
-                "/add Nome - Criar materia\n"
-                "/materias - Minhas materias\n"
-                "/use Nome - Selecionar materia\n"
-                "/status - Ver materia atual\n\n"
-                "📝 CONTEUDO\n"
-                "Envie texto ou link para salvar\n\n"
-                "🤖 IA\n"
+                "📚 *ASSISTENTE DE ESTUDOS*\n\n"
+                "/add [nome] - Nova matéria\n"
+                "/materias - Listar matérias\n"
+                "/use [nome] - Selecionar foco\n"
+                "/status - Matéria ativa\n\n"
+                "🤖 *IA*\n"
                 "/resumir | /gerar_questoes"
             )
             send_message(chat_id, menu)
 
         elif text == "/status":
-            if not sessao.materia_ativa:
-                send_message(chat_id, "Nenhuma materia selecionada. Use: /use Nome")
-            else:
-                m = db.query(Materia).filter_by(id=sessao.materia_ativa).first()
-                nome_materia = m.nome if m else "Desconhecida"
-                send_message(chat_id, f"📖 Materia atual: {nome_materia}")
+            m = db.query(Materia).get(sessao.materia_ativa) if sessao.materia_ativa else None
+            send_message(chat_id, f"📖 *Foco atual:* {m.nome if m else 'Nenhum'}")
 
         elif text.startswith("/add"):
             nome = text.replace("/add", "").strip()
             if nome:
-                m = Materia(nome=nome, user_id=user.id)
-                db.add(m)
+                db.add(Materia(nome=nome, user_id=user.id))
                 db.commit()
-                send_message(chat_id, f"✅ {nome} criada!")
-            else:
-                send_message(chat_id, "Digite: /add Nome")
+                send_message(chat_id, f"✅ Matéria '{nome}' registrada.")
 
         elif text == "/materias":
-            materias = db.query(Materia).filter_by(user_id=user.id).all()
-            if not materias:
-                send_message(chat_id, "Vazio. Crie com /add")
+            mats = db.query(Materia).filter_by(user_id=user.id).all()
+            if mats:
+                lista = "\n".join([f"{i+1}. {m.nome}" for i, m in enumerate(mats)])
+                send_message(chat_id, f"📋 *Suas Matérias:*\n\n{lista}")
             else:
-                # LISTA INCREMENTAL (1, 2, 3...)
-                lista = [f"{i+1}. {m.nome}" for i, m in enumerate(materias)]
-                send_message(chat_id, "Suas materias:\n\n" + "\n".join(lista))
+                send_message(chat_id, "📭 Nenhuma matéria criada.")
 
         elif text.startswith("/use"):
-            nome_busca = text.replace("/use", "").strip()
-            materia = db.query(Materia).filter_by(user_id=user.id, nome=nome_busca).first()
-            if materia:
-                sessao.materia_ativa = materia.id
+            nome = text.replace("/use", "").strip()
+            m = db.query(Materia).filter_by(user_id=user.id, nome=nome).first()
+            if m:
+                sessao.materia_ativa = m.id
                 db.commit()
-                send_message(chat_id, f"🎯 Focado em: {materia.nome}")
+                send_message(chat_id, f"🎯 Agora estudando: *{m.nome}*")
             else:
-                send_message(chat_id, "Materia nao encontrada.")
+                send_message(chat_id, "⚠️ Matéria não encontrada.")
 
-        elif text == "/resumir":
-            if not sessao.materia_ativa:
-                send_message(chat_id, "Use /use primeiro.")
+        # 3. Delegação de Tarefas Pesadas (Threads)
+        elif text in ["/resumir", "/gerar_questoes"]:
+            if sessao.materia_ativa:
+                threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, text)).start()
             else:
-                conts = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).all()
-                if conts:
-                    send_message(chat_id, "🤖 Resumindo com Groq...")
-                    texto_total = " ".join([c.texto for c in conts])
-                    res = pedir_ia("Resumo curto em tópicos.", texto_total)
-                    send_message(chat_id, res)
-                else:
-                    send_message(chat_id, "Materia sem conteudo.")
+                send_message(chat_id, "⚠️ Selecione uma matéria com /use antes.")
 
-        elif text == "/gerar_questoes":
-            if not sessao.materia_ativa:
-                send_message(chat_id, "Use /use primeiro.")
-            else:
-                conts = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).all()
-                if conts:
-                    send_message(chat_id, "🤖 Criando questões...")
-                    texto_total = " ".join([c.texto for c in conts])
-                    res = pedir_ia("Crie 3 perguntas com respostas.", texto_total)
-                    send_message(chat_id, res)
-
-        # SALVAR AUTOMÁTICO
         elif not text.startswith("/"):
-            if not sessao.materia_ativa:
-                send_message(chat_id, "Selecione uma materia com /use primeiro.")
+            if sessao.materia_ativa:
+                threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, "auto_save", text)).start()
             else:
-                if text.startswith("http"):
-                    send_message(chat_id, "🌐 Lendo link...")
-                    final = extrair_texto_da_url(text)
-                    tipo = "link"
-                else:
-                    final = text
-                    tipo = "texto"
-                
-                if final:
-                    c = Conteudo(texto=final, tipo=tipo, materia_id=sessao.materia_ativa)
-                    db.add(c)
-                    db.commit()
-                    send_message(chat_id, "✅ Conteúdo salvo!")
+                send_message(chat_id, "⚠️ Use /use [materia] para salvar conteúdo.")
 
     except Exception as e:
-        app.logger.error(f"ERRO NO WEBHOOK: {e}")
-        # Retornamos 200 mesmo no erro para o Telegram parar de reenviar a mesma mensagem
-        return {"ok": False, "error": str(e)}, 200
+        logger.error(f"Erro no Webhook: {e}")
     finally:
-        db.close() # ESSENCIAL: Fecha a conexão com o banco sempre
+        db.close()
 
-    return {"ok": True}
+    return jsonify({"status": "success"}), 200
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
