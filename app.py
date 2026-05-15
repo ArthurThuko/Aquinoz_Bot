@@ -26,8 +26,7 @@ app = Flask(__name__)
 with engine.connect() as conn:
     conn.execute(sqlalchemy_text("PRAGMA journal_mode=WAL;"))
 
-
-# --- BACKGROUND TASK PROCESSOR ---
+# --- BACKGROUND ---
 def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
     db = SessionLocal()
     try:
@@ -83,22 +82,11 @@ def task_processor(chat_id, user_id, sessao_id, action_type, payload=None):
             # O /ouvir do menu lê os últimos conteúdos (Limitado a 2 para não bugar o Edge-TTS)
             materiais = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).order_by(Conteudo.id.desc()).limit(2).all()
             if materiais:
-                send_message(chat_id, "🎙️ <b>Sintetizando revisão...</b>")
-                texto_para_voz = "Revisão geral. " + " ".join([c.texto for c in materiais])
-                caminho_audio = gerar_audio_do_texto(texto_para_voz, user_id)
-                
-                if caminho_audio:
-                    send_voice(chat_id, caminho_audio)
-                    if os.path.exists(caminho_audio):
-                        os.remove(caminho_audio)
-                else:
-                    send_message(chat_id, "❌ Erro ao gerar áudio.")
-            else:
-                send_message(chat_id, "📭 Sem conteúdo para voz.")
+                send_message(chat_id, "🤖 Gerando resumo...")
+                texto = " ".join([c.texto for c in materiais])
+                res = pedir_ia("Resuma em 5 tópicos curtos.", texto)
+                send_message(chat_id, res)
 
-        # ==========================================
-        # 3. GERAR QUESTÕES
-        # ==========================================
         elif action_type == "/gerar_questoes":
             materiais = db.query(Conteudo).filter_by(materia_id=sessao.materia_ativa).all()
             
@@ -178,8 +166,11 @@ def webhook():
             callback = data["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
             text = callback["data"]
-            mensagem_original_texto = callback["message"].get("text", "") # Captura o texto do resumo para o TTS
-            requests.post(f"{BASE_URL}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
+
+            requests.post(f"{BASE_URL}/answerCallbackQuery", json={
+                "callback_query_id": callback["id"]
+            })
+
         else:
             msg = data.get("message", {})
             chat_id = msg.get("chat", {}).get("id")
@@ -196,23 +187,12 @@ def webhook():
         sessao = db.query(Sessao).filter_by(user_id=user.id).one_or_none()
         if not sessao:
             sessao = Sessao(user_id=user.id)
-            db.add(sessao); db.commit(); db.refresh(sessao)
+            db.add(sessao)
+            db.commit()
+            db.refresh(sessao)
 
-        # Feedbacks
-        if text == "feedback_bom":
-            send_message(chat_id, "🔥 Ótimo progresso!")
-            return jsonify({"status": "ok"}), 200
-        elif text == "feedback_ruim":
-            send_message(chat_id, "💪 Foco no erro! Vamos revisar mais isso.")
-            return jsonify({"status": "ok"}), 200
-
-        # Disparo do TTS Específico do botão do resumo
-        elif text == "tts_agora":
-            threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, "tts_agora", mensagem_original_texto)).start()
-            return jsonify({"status": "ok"}), 200
-
-        # Menu Principal
-        elif text in ["/start", "/menu"]:
+        # --- MENU ---
+        if text in ["/start", "/menu"]:
             keyboard = {
                 "inline_keyboard": [
                     [{"text": "📚 Matérias", "callback_data": "listar_materias"}, {"text": "➕ Nova", "callback_data": "nova_materia"}],
@@ -274,18 +254,15 @@ def webhook():
             if sessao.materia_ativa:
                 threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, text)).start()
             else:
-                send_message(chat_id, "⚠️ Selecione uma matéria primeiro.")
-
-        elif text.startswith("/pergunta "):
-            if sessao.materia_ativa:
-                threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, "/pergunta", text.replace("/pergunta ",""))).start()
+                send_message(chat_id, "⚠️ Selecione uma matéria.")
 
         # --- AUTO SAVE ---
         elif not text.startswith("/"):
+<<<<<<< Updated upstream
             if sessao.materia_ativa:
                 threading.Thread(target=task_processor, args=(chat_id, user.id, sessao.id, "auto_save", text)).start()
             else:
-                send_message(chat_id, "⚠️ Escolha uma matéria antes de enviar conteúdo.")
+                send_message(chat_id, "⚠️ Escolha uma matéria primeiro.")
 
     except Exception as e:
         logger.error(f"Erro: {e}")
