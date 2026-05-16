@@ -1,7 +1,17 @@
 def limpar_texto(t):
-    """Remove markdown e protege caracteres como < e > para o Telegram não rejeitar a mensagem."""
+    """Remove markdown e protege caracteres como < e > para o Telegram não rejeitar a mensagem, 
+    mas preserva as tags HTML de negrito biônico."""
+    # 1. Remove formatações antigas de markdown
     t = t.replace("*", "").replace("_", "").replace("#", "").replace("`", "")
-    return t.replace("<", "&lt;").replace(">", "&gt;")
+    
+    # 2. Escapa tudo por segurança (evita crash com códigos como 'if x < y:')
+    t = t.replace("<", "&lt;").replace(">", "&gt;")
+    
+    # 3. O Pulo do Gato: Restaura estritamente as tags que o bot precisa renderizar
+    t = t.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+    t = t.replace("&lt;B&gt;", "<b>").replace("&lt;/B&gt;", "</b>")
+    
+    return t
 
 def dividir_texto_em_partes(texto, limite=900):
     """
