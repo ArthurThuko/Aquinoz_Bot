@@ -27,6 +27,13 @@ def pedir_ia(prompt, contexto):
             temperature=0.4,
             max_tokens=1500
         )
-        return chat_completion.choices[0].message.content
+        
+        texto_resposta = chat_completion.choices[0].message.content
+        # Pegamos o consumo total de tokens (Prompt + Resposta) da Groq
+        tokens_usados = chat_completion.usage.total_tokens
+        
+        # Retorna uma tupla: (texto, quantidade_de_tokens)
+        return texto_resposta, tokens_usados
+        
     except Exception as e:
-        return f"Erro na IA: {e}"
+        return f"Erro na IA: {e}", 0

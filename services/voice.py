@@ -2,23 +2,24 @@ import edge_tts
 import asyncio
 import os
 
-def gerar_audio_do_texto(texto, user_id):
+def gerar_audio_do_texto(texto, user_id, indice=None):
     """
     Usa as vozes neurais gratuitas da Microsoft via Edge-TTS.
     Voz selecionada: Antonio (pt-BR).
     """
-    file_path = f"temp_voice_{user_id}.mp3"
+    # Adiciona a marcação da parte no nome do arquivo para evitar colisão entre as fatias
+    sufixo = f"_parte_{indice}" if indice is not None else ""
+    file_path = f"temp_voice_{user_id}{sufixo}.mp3"
     
-    # ID exato da voz do Antonio
     voice = "pt-BR-AntonioNeural" 
     
     async def run_tts():
-        # Limitamos a 3000 caracteres para garantir rapidez e estabilidade
-        communicate = edge_tts.Communicate(texto[:3000], voice)
+        # Velocidade normal (sem rate) focada em acessibilidade e leitura acompanhada
+        communicate = edge_tts.Communicate(texto, voice)
         await communicate.save(file_path)
 
     try:
-        # Executa o loop assíncrono dentro da thread do Flask
+        # Executa o loop assíncrono dentro da thread
         asyncio.run(run_tts())
         
         if os.path.exists(file_path):
