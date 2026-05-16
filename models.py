@@ -30,5 +30,6 @@ class Sessao(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     materia_ativa = Column(Integer, ForeignKey("materias.id"))
+    editando_materia_id = Column(Integer, nullable=True)
 
 Base.metadata.create_all(engine)
