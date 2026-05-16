@@ -5,10 +5,6 @@ __pycache__/
 # Banco de dados
 *.db
 
-# Arquivos temporários do Banco de Dados
-database.db-shm
-database.db-wal
-
 # Ambiente virtual
 venv/
 .env
