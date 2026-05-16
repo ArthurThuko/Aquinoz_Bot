@@ -6,13 +6,17 @@ from models import SessionLocal, User, Materia, Sessao
 from services.telegram import send_message
 from config import BASE_URL
 from tasks import (
+    confirmar_delete_conteudo,
+    deletar_conteudo,
     gerar_resumo,
     gerar_questoes,
+    listar_conteudos,
     salvar_conteudo,
     responder_pergunta,
     processar_pdf,
     task_gerar_audio,
     gerar_gabarito_rag,
+    ver_conteudo,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,7 @@ def processar_mensagem(msg):
                     {"text": "📚 Minhas Materias", "callback_data": "/materias"},
                     {"text": "➕ Nova Materia", "callback_data": "/nova_materia"},
                 ],
+                [{"text": "📄 Conteúdos", "callback_data": "/conteudos"}],
                 [{"text": "💡 Ajuda", "callback_data": "/ajuda"}],
             ]
         }
@@ -84,6 +89,18 @@ def processar_mensagem(msg):
                 menu_bolhas,
             )
             return
+        
+        elif texto == "/conteudos":
+            listar_conteudos(chat_id, user.id, sessao.materia_ativa)
+
+        elif texto.startswith("/ver_conteudo "):
+            ver_conteudo(chat_id, user.id, int(texto.split()[1]))
+
+        elif texto.startswith("/confirm_del_ctd "):
+            confirmar_delete_conteudo(chat_id, int(texto.split()[1]))
+
+        elif texto.startswith("/delete_ctd "):
+            deletar_conteudo(chat_id, user.id, int(texto.split()[1]))
 
         elif texto == "/nova_materia":
             send_message(
@@ -119,15 +136,19 @@ def processar_mensagem(msg):
         elif texto == "/materias":
             mats = db.query(Materia).filter_by(user_id=user.id).all()
             if mats:
+                botoes_lista = []
+
+                for m in mats:
+                    botoes_lista.append([
+                        {"text": m.nome, "callback_data": f"/use {m.id}"}
+                    ])
+                    botoes_lista.append([
+                        {"text": "✏️", "callback_data": f"/edit {m.id}"},
+                        {"text": "🗑️", "callback_data": f"/delete {m.id}"}
+                    ])
+
                 botoes = {
-                    "inline_keyboard": [
-                        [
-                            {"text": m.nome, "callback_data": f"/use {m.id}"},
-                            {"text": "✏️", "callback_data": f"/edit {m.id}"},
-                            {"text": "🗑️", "callback_data": f"/delete {m.id}"},
-                        ]
-                        for m in mats
-                    ]
+                    "inline_keyboard": botoes_lista
                 }
                 send_message(chat_id, "Suas materias salvas:", botoes)
             else:

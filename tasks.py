@@ -1,7 +1,7 @@
 import os
 import random
 import logging
-from models import SessionLocal, Conteudo
+from models import Materia, SessionLocal, Conteudo
 from services.telegram import send_message, send_voice
 from services.ai_assistant import pedir_ia
 from services.voice import gerar_audio_do_texto
@@ -233,3 +233,90 @@ def salvar_conteudo(chat_id, materia_id, payload):
             send_message(chat_id, f"✅ Absorvido! ({len(pedacos)} blocos arquivados na matéria)")
     finally:
         db.close()
+        
+def listar_conteudos(chat_id, user_id, materia_id):
+    db = SessionLocal()
+    try:
+        conteudos = db.query(Conteudo).filter_by(
+            materia_id=materia_id
+        ).order_by(Conteudo.id.desc()).limit(20).all()
+
+        if not conteudos:
+            send_message(chat_id, "📭 Nenhum conteúdo salvo ainda.")
+            return
+
+        botoes = []
+
+        for c in conteudos:
+            preview = c.texto[:40].replace("\n", " ")
+            if len(c.texto) > 40:
+                preview += "..."
+
+            botoes.append([
+                {"text": preview, "callback_data": f"/ver_conteudo {c.id}"},
+                {"text": "🗑️", "callback_data": f"/confirm_del_ctd {c.id}"}
+            ])
+
+        send_message(chat_id, "📄 Seus conteúdos:", {
+            "inline_keyboard": botoes
+        })
+
+    finally:
+        db.close()
+        
+def ver_conteudo(chat_id, user_id, conteudo_id):
+    db = SessionLocal()
+    try:
+        c = db.query(Conteudo).get(conteudo_id)
+
+        if not c:
+            send_message(chat_id, "Conteúdo não encontrado.")
+            return
+
+        texto = limpar_texto(c.texto)
+
+        if len(texto) > 4000:
+            texto = texto[:3900] + "\n\n[⚠️ Conteúdo cortado]"
+
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Excluir", "callback_data": f"/confirm_del_ctd {c.id}"}]
+            ]
+        }
+
+        send_message(chat_id, f"📄 Conteúdo:\n\n{texto}", botoes)
+
+    finally:
+        db.close()
+        
+def deletar_conteudo(chat_id, user_id, conteudo_id):
+    db = SessionLocal()
+    try:
+        c = db.query(Conteudo).join(Materia).filter(
+            Conteudo.id == conteudo_id,
+            Materia.user_id == user_id
+        ).first()
+
+        if not c:
+            send_message(chat_id, "Conteúdo não encontrado ou não pertence a você.")
+            return
+
+        db.delete(c)
+        db.commit()
+
+        send_message(chat_id, "🗑️ Conteúdo excluído com sucesso!")
+
+    finally:
+        db.close()
+        
+def confirmar_delete_conteudo(chat_id, conteudo_id):
+    botoes = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Sim", "callback_data": f"/delete_ctd {conteudo_id}"},
+                {"text": "❌ Cancelar", "callback_data": "/conteudos"}
+            ]
+        ]
+    }
+
+    send_message(chat_id, "Tem certeza que deseja excluir este conteúdo?", botoes)
