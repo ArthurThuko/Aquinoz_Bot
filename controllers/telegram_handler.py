@@ -6,9 +6,9 @@ from models import SessionLocal, Materia
 from services.telegram import send_message
 from config import BASE_URL
 from tasks.ingestion import processar_pdf, salvar_conteudo
-from tasks.study import gerar_resumo, gerar_questoes, responder_pergunta, gerar_gabarito_rag
-from tasks.media import task_gerar_audio
+from tasks.study import confirmar_delete_conteudo, deletar_conteudo, gerar_resumo, gerar_questoes, listar_conteudos, responder_pergunta, gerar_gabarito_rag, ver_conteudo
 from core.auth import obter_sessao_usuario
+from tasks.media import task_gerar_audio
 from utils.menus import MENU_PRINCIPAL, TEXTO_AJUDA
 
 logger = logging.getLogger(__name__)
@@ -53,16 +53,6 @@ def processar_mensagem(msg):
             threading.Thread(target=gerar_gabarito_rag, args=(chat_id, sessao.materia_ativa, conteudo)).start()
             return
 
-        # 4. Gerenciamento de Matérias
-        elif texto == "/materias":
-            mats = db.query(Materia).filter_by(user_id=user.id).all()
-            if mats:
-                botoes = {"inline_keyboard": [[{"text": m.nome, "callback_data": f"/use {m.nome}"}] for m in mats]}
-                send_message_async(chat_id, "Suas materias salvas:", botoes)
-            else:
-                send_message_async(chat_id, "Voce ainda nao tem materias. Use /add NomeDaMateria")
-            return
-
         elif texto.startswith("/add "):
             nome = texto.replace("/add ", "").strip()
             db.add(Materia(nome=nome, user_id=user.id)); db.commit()
@@ -77,6 +67,68 @@ def processar_mensagem(msg):
                 send_message_async(chat_id, f"Materia Ativa: {m.nome}\n\nO que vamos estudar agora?", MENU_PRINCIPAL)
             else:
                 send_message_async(chat_id, "Materia nao encontrada.")
+            return
+        
+        elif texto == "/conteudos":
+            listar_conteudos(chat_id, user.id, sessao.materia_ativa)
+
+        elif texto.startswith("/ver_conteudo "):
+            ver_conteudo(chat_id, user.id, int(texto.split()[1]))
+
+        elif texto.startswith("/confirm_del_ctd "):
+            confirmar_delete_conteudo(chat_id, int(texto.split()[1]))
+
+        elif texto.startswith("/delete_ctd "):
+            deletar_conteudo(chat_id, user.id, int(texto.split()[1]))
+
+        elif texto == "/materias":
+            mats = db.query(Materia).filter_by(user_id=user.id).all()
+            if mats:
+                botoes_lista = []
+
+                for m in mats:
+                    botoes_lista.append([
+                        {"text": m.nome, "callback_data": f"/use {m.nome}"}
+                    ])
+                    botoes_lista.append([
+                        {"text": "✏️", "callback_data": f"/edit {m.id}"},
+                        {"text": "🗑️", "callback_data": f"/delete {m.id}"}
+                    ])
+
+                botoes = {
+                    "inline_keyboard": botoes_lista
+                }
+                send_message(chat_id, "Suas materias salvas:", botoes)
+            else:
+                send_message(
+                    chat_id, "Voce ainda nao tem materias. Use /add NomeDaMateria"
+                )
+            return
+
+        
+        elif texto.startswith("/delete "):
+            materia_id = int(texto.split(" ")[1])
+            m = db.query(Materia).filter_by(user_id=user.id, id=materia_id).first()
+
+            if m:
+                # Se for a ativa, remove
+                if sessao.materia_ativa == m.id:
+                    sessao.materia_ativa = None
+
+                db.delete(m)
+                db.commit()
+
+                send_message(chat_id, "🗑️ Matéria excluída com sucesso!")
+            else:
+                send_message(chat_id, "Matéria não encontrada.")
+            return
+        
+        elif texto.startswith("/edit "):
+            materia_id = int(texto.split(" ")[1])
+            sessao.editando_materia_id = materia_id
+            db.commit()
+
+            send_message(chat_id, "✏️ Digite o novo nome da matéria:")
             return
 
         # --- BLOQUEIO DE SEGURANÇA ---
@@ -98,7 +150,7 @@ def processar_mensagem(msg):
                 local_path = f"temp_{file_id}.pdf"
                 with open(local_path, "wb") as f:
                     f.write(requests.get(file_url).content)
-                
+                processar_pdf
                 threading.Thread(target=processar_pdf, args=(chat_id, sessao.materia_ativa, local_path)).start()
                 return
             else:
@@ -121,6 +173,21 @@ def processar_mensagem(msg):
         elif texto == "/gerar_questoes":
             send_message_async(chat_id, "📝 Analisando seu material para bolar as questões, aguarde...")
             threading.Thread(target=gerar_questoes, args=(chat_id, sessao.materia_ativa)).start()
+            
+        elif sessao.editando_materia_id and not texto.startswith("/"):
+            m = db.query(Materia).filter_by(
+                user_id=user.id,
+                id=sessao.editando_materia_id
+            ).first()
+
+            if m:
+                m.nome = texto.strip()
+                sessao.editando_materia_id = None
+                db.commit()
+                send_message(chat_id, "✏️ Matéria atualizada com sucesso!")
+            else:
+                send_message(chat_id, "Erro ao editar matéria.")
+            return
             
         elif texto.strip().endswith("?"):
             send_message_async(chat_id, "🔎 Consultando sua base de conhecimento para encontrar a resposta...")
