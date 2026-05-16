@@ -25,7 +25,7 @@ def pedir_ia(prompt, contexto):
             ],
             model="llama-3.1-8b-instant",
             temperature=0.4,
-            max_tokens=600
+            max_tokens=1500
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
