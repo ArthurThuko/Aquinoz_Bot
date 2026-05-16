@@ -1,50 +1,21 @@
-import os
 import random
 import logging
+import threading
 from models import SessionLocal, Conteudo
-from services.telegram import send_message, send_voice
+from services.telegram import send_message
 from services.ai_assistant import pedir_ia
-from services.voice import gerar_audio_do_texto
-from services.scraper import extrair_texto_da_url
-from services.chunker import chunk_text
-from services.pdf_reader import extrair_texto_pdf
+from core.telemetry import telemetria, metricas
+from utils.text_helpers import limpar_texto
+from tasks.media import pre_gerar_audio_resumo
 
 logger = logging.getLogger(__name__)
 
-def limpar_texto(t):
-    """
-    Remove markdown e protege caracteres como < e > 
-    para o Telegram não rejeitar a mensagem por erro de formatação.
-    """
-    t = t.replace("*", "").replace("_", "").replace("#", "").replace("`", "")
-    return t.replace("<", "&lt;").replace(">", "&gt;")
-
-def processar_pdf(chat_id, materia_id, filepath):
-    db = SessionLocal()
-    try:
-        send_message(chat_id, "Lendo e fatiando seu PDF para o banco de dados...")
-        texto = extrair_texto_pdf(filepath)
-        if not texto:
-            send_message(chat_id, "Não consegui extrair o texto deste PDF.")
-            return
-
-        pedacos = chunk_text(texto, max_chars=1000, overlap=100)
-        for p in pedacos:
-            db.add(Conteudo(texto=p, tipo="pdf", materia_id=materia_id))
-        db.commit()
-        send_message(chat_id, f"✅ PDF salvo! {len(pedacos)} blocos de conhecimento adicionados.")
-    except Exception as e:
-        logger.error(f"Erro PDF: {e}")
-    finally:
-        if os.path.exists(filepath): os.remove(filepath)
-        db.close()
-
+@telemetria
 def gerar_resumo(chat_id, materia_id, pagina=1):
     db = SessionLocal()
     try:
         limite_por_pagina = 3
         offset = (pagina - 1) * limite_por_pagina
-
         total_materiais = db.query(Conteudo).filter_by(materia_id=materia_id).count()
 
         if total_materiais == 0:
@@ -72,18 +43,22 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
             "IMPORTANTE: Vá direto ao ponto e conclua todas as frases perfeitamente."
         )
         
-        resumo_raw = pedir_ia(prompt, texto_base)
-
-        # Checa se a IA retornou erro de conexão
+        resumo_raw, tokens = pedir_ia(prompt, texto_base)
+        metricas.tokens += tokens
+        
         if "Erro na IA" in resumo_raw:
             send_message(chat_id, "❌ Falha na conexão com a inteligência artificial. Pode tentar de novo em alguns instantes?")
             return
 
         resumo_limpo = limpar_texto(resumo_raw)
 
-        # TRAVA DE SEGURANÇA: Impede que o Telegram rejeite textos muito longos
         if len(resumo_limpo) > 4000:
             resumo_limpo = resumo_limpo[:3900] + "...\n\n[⚠️ Resumo reduzido para não ultrapassar o limite do Telegram]"
+
+        # --- GATILHO DO EAGER LOADING (ILUSÃO DE TRABALHO) ---
+        # Dispara a geração da parte 1 em background sem travar a entrega do texto
+        threading.Thread(target=pre_gerar_audio_resumo, args=(chat_id, resumo_limpo)).start()
+        # -----------------------------------------------------
 
         tem_mais_conteudo = (offset + limite_por_pagina) < total_materiais
         
@@ -105,19 +80,7 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
     finally:
         db.close()
 
-def task_gerar_audio(chat_id, user_id, texto):
-    try:
-        if not texto or "/audio_" in texto or "Analisando seus" in texto:
-            return
-            
-        send_message(chat_id, "Sintetizando a voz, só um instante...")
-        path = gerar_audio_do_texto(texto, user_id)
-        if path:
-            send_voice(chat_id, path)
-            if os.path.exists(path): os.remove(path)
-    except Exception as e:
-        logger.error(f"Erro Áudio: {e}")
-
+@telemetria
 def responder_pergunta(chat_id, materia_id, pergunta):
     db = SessionLocal()
     try:
@@ -135,7 +98,9 @@ def responder_pergunta(chat_id, materia_id, pergunta):
             f"CONTEXTO:\n{contexto}"
         )
         
-        res = pedir_ia(prompt, pergunta)
+        res, tokens = pedir_ia(prompt, pergunta)
+        metricas.tokens += tokens
+        
         resposta_limpa = limpar_texto(res)
         
         if len(resposta_limpa) > 4000:
@@ -147,6 +112,7 @@ def responder_pergunta(chat_id, materia_id, pergunta):
     finally:
         db.close()
 
+@telemetria
 def gerar_questoes(chat_id, materia_id):
     db = SessionLocal()
     try:
@@ -165,7 +131,9 @@ def gerar_questoes(chat_id, materia_id):
             "Use apenas texto puro, sem asteriscos ou markdown."
         )
         
-        questoes_raw = pedir_ia(prompt, texto_base)
+        questoes_raw, tokens = pedir_ia(prompt, texto_base)
+        metricas.tokens += tokens
+        
         questoes_limpas = limpar_texto(questoes_raw)
 
         if len(questoes_limpas) > 4000:
@@ -184,6 +152,7 @@ def gerar_questoes(chat_id, materia_id):
     finally:
         db.close()
 
+@telemetria
 def gerar_gabarito_rag(chat_id, materia_id, texto_das_questoes):
     db = SessionLocal()
     try:
@@ -200,7 +169,9 @@ def gerar_gabarito_rag(chat_id, materia_id, texto_das_questoes):
             f"QUESTOES:\n{texto_das_questoes}"
         )
         
-        gabarito = pedir_ia(prompt, "")
+        gabarito, tokens = pedir_ia(prompt, "")
+        metricas.tokens += tokens
+        
         gabarito_limpo = limpar_texto(gabarito)
         
         if len(gabarito_limpo) > 4000:
@@ -209,27 +180,5 @@ def gerar_gabarito_rag(chat_id, materia_id, texto_das_questoes):
         send_message(chat_id, f"🎯 Gabarito Oficial:\n\n{gabarito_limpo}")
     except Exception as e:
         logger.error(f"Erro Gabarito: {e}")
-    finally:
-        db.close()
-
-def salvar_conteudo(chat_id, materia_id, payload):
-    db = SessionLocal()
-    try:
-        tipo = "link" if payload.startswith("http") else "texto"
-        if tipo == "link":
-            send_message(chat_id, "🔗 Acessando o link para leitura...")
-            texto = extrair_texto_da_url(payload)
-            if not texto or len(texto.strip()) < 10:
-                send_message(chat_id, "⚠️ Este site bloqueia leitores automáticos. Por favor, copie e cole o texto no chat.")
-                return
-        else:
-            texto = payload
-
-        if texto:
-            pedacos = chunk_text(texto, max_chars=1000, overlap=100)
-            for p in pedacos:
-                db.add(Conteudo(texto=p, tipo=tipo, materia_id=materia_id))
-            db.commit()
-            send_message(chat_id, f"✅ Absorvido! ({len(pedacos)} blocos arquivados na matéria)")
     finally:
         db.close()

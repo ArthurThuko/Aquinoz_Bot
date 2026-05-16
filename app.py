@@ -2,7 +2,7 @@ import logging
 from flask import Flask, request, jsonify
 from sqlalchemy import text as sqlalchemy_text
 from models import engine
-from bot_handler import processar_mensagem
+from controllers.telegram_handler import processar_mensagem
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
