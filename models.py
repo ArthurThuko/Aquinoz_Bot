@@ -27,7 +27,8 @@ class Conteudo(Base):
 class Sessao(Base):
     __tablename__ = "sessao"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
-    materia_ativa = Column(Integer)
+
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    materia_ativa = Column(Integer, ForeignKey("materias.id"))
 
 Base.metadata.create_all(engine)
