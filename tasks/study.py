@@ -2,6 +2,8 @@ import random
 import logging
 import threading
 from models import Materia, SessionLocal, Conteudo
+from services.chunker import chunk_text
+from services.scraper import extrair_texto_da_url
 from services.telegram import send_message, send_voice
 from services.ai_assistant import pedir_ia
 from core.telemetry import telemetria, metricas
