@@ -18,6 +18,6 @@ TEXTO_AJUDA = (
     "<b>🚀 PASSO A PASSO RÁPIDO</b>\n"
     "1. Use <code>/add Nome</code> para criar a disciplina.\n"
     "2. Em <b>Minhas Matérias</b>, selecione a que deseja alimentar.\n"
-    "3. Mande textos, links ou PDFs.\n"
+    "3. Mande textos, links, PDFs ou imagens.\n"
     "4. Use o <b>/menu</b> para gerar resumos e testes."
 )
