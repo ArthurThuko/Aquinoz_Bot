@@ -159,7 +159,6 @@ def processar_mensagem(msg):
 
         # 6. Rotas de Estudo (IA e Ingestão de Texto)
         if texto == "/resumir":
-            send_message_async(chat_id, "⏳ Montando um resumo da sua matéria, só um instante...")
             threading.Thread(target=gerar_resumo, args=(chat_id, sessao.materia_ativa, 1)).start()
             
         elif texto.startswith("/resumir_pag_"):
