@@ -2,7 +2,7 @@ MENU_PRINCIPAL = {
     "inline_keyboard": [
         [{"text": "📊 Resumir", "callback_data": "/resumir"}, {"text": "📝 Questoes", "callback_data": "/gerar_questoes"}],
         [{"text": "📚 Minhas Materias", "callback_data": "/materias"}, {"text": "➕ Nova Materia", "callback_data": "/nova_materia"}],
-        [{"text": "💡 Ajuda", "callback_data": "/ajuda"}]
+        [{"text": "📖 Conteúdos", "callback_data": "/conteudos"}, {"text": "💡 Ajuda", "callback_data": "/ajuda"}]
     ]
 }
 

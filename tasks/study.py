@@ -199,7 +199,8 @@ def gerar_questoes(chat_id, materia_id):
         prompt = (
             "Com base no texto fornecido, crie 3 questões de múltipla escolha (A-D).\n"
             "Use as tags HTML <b> e </b> nos enunciados ou conceitos chave. Não use markdown.\n"
-            "NÃO coloque a resposta correta e NÃO coloque o gabarito no texto."
+            "NÃO coloque a resposta correta e NÃO coloque o gabarito no texto.\n"
+            "Garanta que a posição da alternativa correta varie entre A, B, C e D, evitando repetir o mesmo padrão."
         )
         
         questoes_raw, tokens = pedir_ia(prompt, texto_base)
