@@ -35,8 +35,11 @@ def processar_mensagem(msg):
             send_message_async(chat_id, f"Materia Selecionada: {materia_nome}\n\nEscolha uma opcao:", MENU_PRINCIPAL)
             return
 
+        # 🧠 NOVO FLUXO: Ativa o estado de criação usando o Sentinela -1
         elif texto == "/nova_materia":
-            send_message_async(chat_id, "Para criar uma nova materia, digite:\n\n/add NomeDaMateria")
+            sessao.editando_materia_id = -1
+            db.commit()
+            send_message_async(chat_id, "✏️ Digite qual o nome da Matéria:")
             return
 
         # 3. Mídia e Áudio (Callbacks das bolhas)
@@ -53,6 +56,7 @@ def processar_mensagem(msg):
             threading.Thread(target=gerar_gabarito_rag, args=(chat_id, sessao.materia_ativa, conteudo)).start()
             return
 
+        # Mantido apenas como fallback seguro por comando
         elif texto.startswith("/add "):
             nome = texto.replace("/add ", "").strip()
             db.add(Materia(nome=nome, user_id=user.id)); db.commit()
@@ -105,13 +109,11 @@ def processar_mensagem(msg):
                 )
             return
 
-        
         elif texto.startswith("/delete "):
             materia_id = int(texto.split(" ")[1])
             m = db.query(Materia).filter_by(user_id=user.id, id=materia_id).first()
 
             if m:
-                # Se for a ativa, remove
                 if sessao.materia_ativa == m.id:
                     sessao.materia_ativa = None
 
@@ -146,6 +148,32 @@ def processar_mensagem(msg):
             send_message(chat_id, "✏️ Digite o novo nome da matéria:")
             return
 
+# 🧠 MÁQUINA DE ESTADOS: Captura o texto para Criação ou Edição
+        elif sessao.editando_materia_id and not texto.startswith("/"):
+            if sessao.editando_materia_id == -1:
+                # Caso seja -1, significa que o usuário está CRIANDO uma nova matéria
+                nome_materia = texto.strip()
+                db.add(Materia(nome=nome_materia, user_id=user.id))
+                sessao.editando_materia_id = None
+                db.commit()
+                # 🎯 CORRIGIDO: </b> com barra fechando a tag corretamente
+                send_message_async(chat_id, f"✅ Matéria <b>{nome_materia}</b> criada com sucesso! Selecione em /materias", MENU_PRINCIPAL)
+            else:
+                # Caso contrário, está EDITANDO uma matéria existente
+                m = db.query(Materia).filter_by(
+                    user_id=user.id,
+                    id=sessao.editando_materia_id
+                ).first()
+
+                if m:
+                    m.nome = texto.strip()
+                    sessao.editando_materia_id = None
+                    db.commit()
+                    send_message_async(chat_id, "✏️ Matéria atualizada com sucesso!", MENU_PRINCIPAL)
+                else:
+                    send_message_async(chat_id, "Erro ao editar matéria.")
+            return 
+
         # --- BLOQUEIO DE SEGURANÇA ---
         if not sessao.materia_ativa:
             send_message_async(chat_id, "⚠️ Selecione uma materia primeiro em /materias", MENU_PRINCIPAL)
@@ -165,18 +193,17 @@ def processar_mensagem(msg):
                 local_path = f"temp_{file_id}.pdf"
                 with open(local_path, "wb") as f:
                     f.write(requests.get(file_url).content)
-                processar_pdf
+                
                 threading.Thread(target=processar_pdf, args=(chat_id, sessao.materia_ativa, local_path)).start()
                 return
             else:
                 send_message_async(chat_id, "❌ No momento so consigo ler arquivos PDF.")
                 return
             
-            # 6. Recepção de Imagens
+        # 6. Recepção de Imagens
         if "photo" in msg:
             send_message_async(chat_id, "🖼️ Recebi a imagem! Extraindo o texto...")
 
-            # pega a melhor qualidade (último item da lista)
             photo = msg["photo"][-1]
             file_id = photo["file_id"]
 
@@ -212,21 +239,6 @@ def processar_mensagem(msg):
         elif texto == "/gerar_questoes":
             send_message_async(chat_id, "📝 Analisando seu material para bolar as questões, aguarde...")
             threading.Thread(target=gerar_questoes, args=(chat_id, sessao.materia_ativa)).start()
-            
-        elif sessao.editando_materia_id and not texto.startswith("/"):
-            m = db.query(Materia).filter_by(
-                user_id=user.id,
-                id=sessao.editando_materia_id
-            ).first()
-
-            if m:
-                m.nome = texto.strip()
-                sessao.editando_materia_id = None
-                db.commit()
-                send_message(chat_id, "✏️ Matéria atualizada com sucesso!", MENU_PRINCIPAL)
-            else:
-                send_message(chat_id, "Erro ao editar matéria.")
-            return
             
         elif texto.strip().endswith("?"):
             send_message_async(chat_id, "🔎 Consultando sua base de conhecimento para encontrar a resposta...")
