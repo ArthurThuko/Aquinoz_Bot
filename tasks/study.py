@@ -60,14 +60,22 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
             "💡 <b>Exemplo prático:</b> [Analogia criativa e simples]\n\n"
             "REGRAS CRÍTICAS:\n"
             "- Use APENAS as tags HTML <b> e </b>.\n"
-            "- Se você não usar negritos nas palavras-chave, o aluno não conseguirá aprender."
+            "- Se você não usar negritos nas palavras-chave, o aluno não conseguirá aprender.\n"
         )
         
         if tem_mais_conteudo:
             prompt += (
-                "\n\nAo final, crie o '🧠 Desafio Relâmpago de Retenção!' (Pergunta A e B).\n"
-                "⚠️ NUNCA revele a resposta no corpo do texto.\n"
-                "⚠️ Escreva o gabarito APENAS na última linha, isolado, assim: [GABARITO: A]"
+                "\n\n🧠 Desafio Relâmpago de Retenção:\n"
+                "Crie UMA ÚNICA pergunta de múltipla escolha.\n\n"
+                "Formato OBRIGATÓRIO:\n"
+                "Pergunta: [enunciado]\n"
+                "A) [alternativa]\n"
+                "B) [alternativa]\n\n"
+                "REGRAS:\n"
+                "- Deve existir apenas UMA pergunta\n"
+                "- A e B são alternativas, NÃO perguntas\n"
+                "- NÃO revele a resposta\n"
+                "- Última linha: [GABARITO: A]"
             )
         
         res_raw, tokens = pedir_ia(prompt, texto_base)
@@ -78,12 +86,28 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
 
         # 🎯 CAPTURA E LIMPEZA TOTAL DO GABARITO (Regex mais agressiva)
         gabarito = "A"
+
+        # Captura o gabarito oficial
         match = re.search(r"\[GABARITO:\s*([A-B])\]", res, re.IGNORECASE)
         if match:
             gabarito = match.group(1).upper()
-            # Remove a linha do gabarito e qualquer rastro de "A resposta é..."
-            res = re.sub(r"\[GABARITO:.*\]", "", res, flags=re.IGNORECASE)
-            res = re.sub(r"(A resposta correta é|Gabarito:|Resposta:).*?(\n|$)", "", res, flags=re.IGNORECASE).strip()
+
+        # 🔥 REMOVE QUALQUER TIPO DE GABARITO (linha inteira)
+        res = re.sub(r"\[GABARITO:.*?\]", "", res, flags=re.IGNORECASE)
+
+        # 🔥 REMOVE FRASES QUE ENTREGAM A RESPOSTA
+        res = re.sub(
+            r"(resposta correta é|alternativa correta é|opção correta é|gabarito:|resposta:).*?(\n|$)",
+            "",
+            res,
+            flags=re.IGNORECASE
+        )
+
+        # 🔥 REMOVE MARCAÇÕES TIPO (A) ou (B) no final
+        res = re.sub(r"\([A-B]\)", "", res)
+
+        # 🔥 REMOVE SOBRAS
+        res = re.sub(r"\n{3,}", "\n\n", res).strip()
 
         # Gatilho de Áudio
         threading.Thread(target=pre_gerar_audio_resumo, args=(chat_id, res)).start()
@@ -102,111 +126,6 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
     except Exception as e:
         logger.error(f"Erro: {e}")
         send_message(chat_id, "⚠️ Erro ao processar. Tente novamente.")
-    finally:
-        db.close()
-    """
-    Gera o resumo pedagógico em partes, incluindo o desafio relâmpago
-    e o gatilho para a geração assíncrona de áudio.
-    """
-    db = SessionLocal()
-    try:
-        limite_por_pagina = 3
-        offset = (pagina - 1) * limite_por_pagina
-        
-        # Contagem total para controle de paginação
-        total_materiais = db.query(Conteudo).filter_by(materia_id=materia_id).count()
-
-        if total_materiais == 0:
-            send_message(chat_id, "📭 Sua matéria está vazia. Adicione links, textos e PDFs para começar sua jornada de estudos!")
-            return
-
-        # Busca os conteúdos de forma paginada (Ordem inversa para manter cronologia)
-        materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(limite_por_pagina).offset(offset).all()
-
-        if not materiais:
-            send_message(chat_id, "✅ Você já resumiu todo o conteúdo disponível desta matéria!")
-            return
-
-        msg_status = "💡 Montando um resumo da sua matéria, só um instante..." if pagina == 1 else f"📖 Lendo a parte {pagina}..."
-        send_message(chat_id, msg_status)
-
-        # Prepara o texto para a IA
-        texto_base = "\n\n".join([c.texto for c in reversed(materiais)])
-        tem_mais_conteudo = (offset + limite_por_pagina) < total_materiais
-
-        # --- PROMPT PEDAGÓGICO ESTRUTURADO ---
-        prompt = (
-            "Aja como um professor sênior, didático e entusiasmado.\n"
-            "Sua missão é explicar o conteúdo de forma que até uma criança entenda, mas mantendo a profundidade técnica.\n\n"
-            "🎨 REGRAS DE FORMATO:\n"
-            "1. Número. <b>Nome do Tópico</b>\n"
-            "2. Explicação: Não repita o texto original. Sintetize a ideia central, destacando conceitos-chave em <b>negrito</b>.\n"
-            "3. 💡 <b>Exemplo prático:</b> Crie uma analogia ou um caso de uso real que não esteja necessariamente no texto, para reforçar o aprendizado.\n\n"
-            "Use apenas HTML <b> e </b>. Evite frases óbvias como 'O texto fala sobre...'. Vá direto ao ponto."
-        )
-        
-        if tem_mais_conteudo:
-            prompt += (
-                "\n\n🚨 SEÇÃO DE DESAFIO (OBRIGATÓRIA):\n"
-                "Crie o '🧠 Desafio Relâmpago de Retenção!' com uma pergunta de múltipla escolha (A e B).\n"
-                "REGRAS DE SEGURANÇA:\n"
-                "- NUNCA escreva a resposta correta no corpo do texto ou nas opções.\n"
-                "- NUNCA use termos como '(Correta)' ou 'Resposta: A'.\n"
-                "- Na ÚLTIMA LINHA do output, e APENAS nela, escreva o gabarito EXATAMENTE assim: [GABARITO: A] ou [GABARITO: B].\n"
-                "Eu vou remover essa linha via código, então ela deve ser a última e estar isolada."
-            )
-        
-        resumo_raw, tokens = pedir_ia(prompt, texto_base)
-        metricas.tokens += tokens
-        
-        if "Erro na IA" in resumo_raw:
-            send_message(chat_id, "❌ Falha na conexão com a inteligência artificial.")
-            return
-
-        # Limpeza e correção de tags HTML
-        resumo_limpo = limpar_texto(resumo_raw)
-        resumo_limpo = resumo_limpo.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>").replace("&lt;B&gt;", "<b>").replace("&lt;/B&gt;", "</b>")
-
-        # 🎯 FILTROS ANTI-SPOILER
-        resumo_limpo = re.sub(r"(A resposta correta é|A alternativa correta é|A opção certa é).*?(\n|$)", "\n", resumo_limpo, flags=re.IGNORECASE)
-        resumo_limpo = re.sub(r"\s*\(Correta\)", "", resumo_limpo, flags=re.IGNORECASE)
-
-        # Extração do Gabarito Oculto
-        gabarito = "A"
-        gabarito_match = re.search(r"\[GABARITO:\s*([A-B])\]", resumo_limpo, re.IGNORECASE)
-        if gabarito_match:
-            gabarito = gabarito_match.group(1).upper()
-            resumo_limpo = re.sub(r"\[GABARITO:\s*[A-B]\]", "", resumo_limpo, flags=re.IGNORECASE).strip()
-
-        # Proteção contra tags HTML cortadas (Limite do Telegram)
-        if len(resumo_limpo) > 4000:
-            resumo_limpo = resumo_limpo[:3900]
-            if resumo_limpo.count("<b>") > resumo_limpo.count("</b>"):
-                resumo_limpo += "</b>"
-            resumo_limpo += "...\n\n[⚠️ Resumo reduzido para o Telegram]"
-
-        # Dispara geração do áudio em background
-        threading.Thread(target=pre_gerar_audio_resumo, args=(chat_id, resumo_limpo)).start()
-        
-        # Montagem dos botões
-        botoes = []
-        botoes.append([{"text": "🔊 Ouvir este resumo", "callback_data": "/audio_resumo"}])
-
-        if tem_mais_conteudo:
-            resumo_limpo += "\n\n⚠️ <b>Responda acima para liberar a próxima parte!</b>"
-            botoes.append([
-                {"text": "🅰️ Opção A", "callback_data": f"/chk_{materia_id}_{pagina + 1}_A_{gabarito}"},
-                {"text": "🅱️ Opção B", "callback_data": f"/chk_{materia_id}_{pagina + 1}_B_{gabarito}"}
-            ])
-        else:
-            resumo_limpo += "\n\n🎉 <b>Parabéns! Você completou todos os materiais dessa matéria!</b> 🚀"
-
-        teclado_opcoes = {"inline_keyboard": botoes}
-        send_message(chat_id, resumo_limpo, teclado_opcoes)
-        
-    except Exception as e:
-        logger.error(f"Erro no Resumo: {e}")
-        send_message(chat_id, "⚠️ Tive uma pequena oscilação ao estruturar essa parte.")
     finally:
         db.close()
 
