@@ -69,7 +69,9 @@ O projeto segue uma abordagem modular, com separação de responsabilidades:
 - Controllers / Handlers → recebem mensagens do usuário  
 - Services → regras de negócio (resumo, perguntas, etc.)  
 - Tasks → processamento mais pesado (PDF, OCR, IA)  
-- Models → estrutura do banco de dados  
+- Models → estrutura do banco de dados
+- core → funcionalidades centrais do sistema (ex: autenticação)
+- utils → funções reutilizáveis e utilitárias para suporte geral  
 
 ### Padrões utilizados:
 - Separação em camadas (inspirado em Clean Architecture)  
@@ -105,7 +107,7 @@ source venv/bin/activate
 
 ### 4. Instalar dependências
 ```bash
-pip install -r requirements.txt
+pip install flask sqlalchemy requests python-dotenv pytesseract pillow
 ```
 
 ### 5. Configurar variáveis
