@@ -75,7 +75,8 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
                 "- Deve existir apenas UMA pergunta\n"
                 "- A e B são alternativas, NÃO perguntas\n"
                 "- NÃO revele a resposta\n"
-                "- Última linha: [GABARITO: A]"
+                "- Última linha OBRIGATÓRIA: [GABARITO: A] ou [GABARITO: B]"
+                "- Se não seguir exatamente esse formato, a resposta será inválida"
             )
         
         res_raw, tokens = pedir_ia(prompt, texto_base)
@@ -84,13 +85,19 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
         # Restaura as tags e limpa o texto
         res = limpar_texto(res_raw).replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
 
-        # 🎯 CAPTURA E LIMPEZA TOTAL DO GABARITO (Regex mais agressiva)
-        gabarito = "A"
+        # 🎯 CAPTURA DO GABARITO (ROBUSTO)
+        gabarito = None
 
-        # Captura o gabarito oficial
-        match = re.search(r"\[GABARITO:\s*([A-B])\]", res, re.IGNORECASE)
+        # Regex mais flexível (aceita vários formatos)
+        match = re.search(r"GABARITO[:\s\[\]]*([A-B])", res, re.IGNORECASE)
+
         if match:
             gabarito = match.group(1).upper()
+        else:
+            logger.warning("⚠️ IA não retornou gabarito corretamente")
+            # fallback inteligente (não fixa sempre A)
+            import random
+            gabarito = random.choice(["A", "B"])
 
         # 🔥 REMOVE QUALQUER TIPO DE GABARITO (linha inteira)
         res = re.sub(r"\[GABARITO:.*?\]", "", res, flags=re.IGNORECASE)
