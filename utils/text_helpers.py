@@ -1,7 +1,14 @@
+import re
+
 def limpar_texto(t):
     """Remove markdown e protege caracteres como < e > para o Telegram não rejeitar a mensagem, 
     mas preserva as tags HTML de negrito biônico."""
-    # 1. Remove formatações antigas de markdown
+    
+    # 🔥 PASSO 2 AQUI: Transforma o ** (Markdown nativo da IA) em <b> (HTML) ANTES de limpar o resto
+    t = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', t)
+    
+    # 1. Remove formatações antigas de markdown 
+    # (Como já salvamos o negrito acima, isso vai limpar apenas os asteriscos soltos/listas)
     t = t.replace("*", "").replace("_", "").replace("#", "").replace("`", "")
     
     # 2. Escapa tudo por segurança (evita crash com códigos como 'if x < y:')

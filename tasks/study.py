@@ -54,13 +54,13 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
         # --- PROMPT REFORÇADO COM FOCO EM NEGRETOS (LEITURA BIÔNICA) ---
         prompt = (
             "Aja como um professor didático. Resuma o texto em tópicos seguindo EXATAMENTE este modelo:\n\n"
-            "Número. <b>NOME DO TÓPICO</b>\n"
-            "Explicação: Use <b>negrito</b> em TODAS as palavras-chave e conceitos centrais para facilitar a <b>leitura biônica</b>. "
+            "Número. **NOME DO TÓPICO**\n"
+            "Explicação: Use **negrito** em TODAS as palavras-chave e conceitos centrais para facilitar a **leitura biônica**. "
             "A explicação deve ser uma síntese inteligente, não uma cópia.\n"
-            "💡 <b>Exemplo prático:</b> [Analogia criativa e simples]\n\n"
+            "💡 **Exemplo prático:** [Analogia criativa e simples]\n\n"
             "REGRAS CRÍTICAS:\n"
-            "- Use APENAS as tags HTML <b> e </b>.\n"
-            "- Se você não usar negritos nas palavras-chave, o aluno não conseguirá aprender.\n"
+            "- Use APENAS a formatação Markdown com dois asteriscos (**) para o negrito.\n"
+            "- OBRIGATÓRIO: Você DEVE destacar os termos cruciais. Se você não usar **negritos** nas palavras-chave, o aluno não conseguirá aprender.\n"
         )
         
         if tem_mais_conteudo:
