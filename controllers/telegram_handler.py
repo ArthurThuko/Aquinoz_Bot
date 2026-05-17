@@ -227,6 +227,7 @@ def processar_mensagem(msg):
         # 7 Rotas de Estudo (IA e Ingestão de Texto)
         if texto == "/resumir":
             threading.Thread(target=gerar_resumo, args=(chat_id, sessao.materia_ativa, 1)).start()
+            return
             
         elif texto.startswith("/resumir_pag_"):
             send_message_async(chat_id, "⏳ Gerando a continuação do resumo...")
