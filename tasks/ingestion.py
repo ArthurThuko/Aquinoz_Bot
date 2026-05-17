@@ -1,6 +1,7 @@
 import os
 import logging
 from models import SessionLocal, Conteudo
+from services.image_reader import extrair_texto_imagem
 from services.telegram import send_message
 from services.scraper import extrair_texto_da_url
 from services.chunker import chunk_text
@@ -30,6 +31,35 @@ def processar_pdf(chat_id, materia_id, filepath):
         logger.error(f"Erro PDF: {e}")
     finally:
         if os.path.exists(filepath): os.remove(filepath)
+        db.close()
+        
+@telemetria
+def processar_imagem(chat_id, materia_id, filepath):
+    db = SessionLocal()
+    try:
+        texto = extrair_texto_imagem(filepath)
+
+        if not texto.strip():
+            send_message(chat_id, "❌ Não consegui extrair texto dessa imagem.")
+            return
+
+        metricas.kb += len(texto.encode('utf-8')) / 1024
+
+        pedacos = chunk_text(texto, max_chars=1000, overlap=100)
+
+        for p in pedacos:
+            db.add(Conteudo(texto=p, tipo="imagem", materia_id=materia_id))
+
+        db.commit()
+
+        send_message(chat_id, f"✅ Imagem salva! {len(pedacos)} blocos adicionados.")
+
+    except Exception as e:
+        logger.error(f"Erro imagem: {e}")
+
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
         db.close()
 
 @telemetria

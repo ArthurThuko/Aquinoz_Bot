@@ -5,7 +5,7 @@ import os
 from models import SessionLocal, Materia
 from services.telegram import send_message
 from config import BASE_URL
-from tasks.ingestion import processar_pdf, salvar_conteudo
+from tasks.ingestion import processar_imagem, processar_pdf, salvar_conteudo
 from tasks.study import confirmar_delete_conteudo, deletar_conteudo, gerar_resumo, gerar_questoes, listar_conteudos, responder_pergunta, gerar_gabarito_rag, ver_conteudo
 from core.auth import obter_sessao_usuario
 from tasks.media import task_gerar_audio
@@ -92,7 +92,7 @@ def processar_mensagem(msg):
                     ])
                     botoes_lista.append([
                         {"text": "✏️", "callback_data": f"/edit {m.id}"},
-                        {"text": "🗑️", "callback_data": f"/delete {m.id}"}
+                        {"text": "🗑️", "callback_data": f"/confirm_delete {m.id}"}
                     ])
 
                 botoes = {
@@ -118,9 +118,24 @@ def processar_mensagem(msg):
                 db.delete(m)
                 db.commit()
 
-                send_message(chat_id, "🗑️ Matéria excluída com sucesso!")
+                send_message(chat_id, "🗑️ Matéria excluída com sucesso!", MENU_PRINCIPAL)
             else:
                 send_message(chat_id, "Matéria não encontrada.")
+            return
+        
+        elif texto.startswith("/confirm_delete "):
+            materia_id = int(texto.split(" ")[1])
+
+            botoes = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Sim", "callback_data": f"/delete {materia_id}"},
+                        {"text": "❌ Não", "callback_data": "/materias"}
+                    ]
+                ]
+            }
+
+            send_message(chat_id, "Tem certeza que deseja excluir esta matéria?", botoes)
             return
         
         elif texto.startswith("/edit "):
@@ -156,8 +171,33 @@ def processar_mensagem(msg):
             else:
                 send_message_async(chat_id, "❌ No momento so consigo ler arquivos PDF.")
                 return
+            
+            # 6. Recepção de Imagens
+        if "photo" in msg:
+            send_message_async(chat_id, "🖼️ Recebi a imagem! Extraindo o texto...")
 
-        # 6. Rotas de Estudo (IA e Ingestão de Texto)
+            # pega a melhor qualidade (último item da lista)
+            photo = msg["photo"][-1]
+            file_id = photo["file_id"]
+
+            file_info = requests.get(f"{BASE_URL}/getFile?file_id={file_id}").json()
+            file_path = file_info["result"]["file_path"]
+
+            token = BASE_URL.split('bot')[1]
+            file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+
+            local_path = f"temp_{file_id}.jpg"
+            with open(local_path, "wb") as f:
+                f.write(requests.get(file_url).content)
+
+            threading.Thread(
+                target=processar_imagem,
+                args=(chat_id, sessao.materia_ativa, local_path)
+            ).start()
+
+            return
+
+        # 7 Rotas de Estudo (IA e Ingestão de Texto)
         if texto == "/resumir":
             threading.Thread(target=gerar_resumo, args=(chat_id, sessao.materia_ativa, 1)).start()
             
@@ -183,7 +223,7 @@ def processar_mensagem(msg):
                 m.nome = texto.strip()
                 sessao.editando_materia_id = None
                 db.commit()
-                send_message(chat_id, "✏️ Matéria atualizada com sucesso!")
+                send_message(chat_id, "✏️ Matéria atualizada com sucesso!", MENU_PRINCIPAL)
             else:
                 send_message(chat_id, "Erro ao editar matéria.")
             return
