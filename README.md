@@ -6,7 +6,7 @@ O Aquinoz Bot é uma aplicação voltada para auxiliar nos estudos de forma simp
 
 A proposta do projeto é permitir que o usuário envie conteúdos (como textos, PDFs, imagens e links) e receba de volta:
 
-- Resumos automáticos  
+- Resumos automáticos (Em texto ou áudio)
 - Questões de múltipla escolha  
 - Respostas para dúvidas  
 - Organização de conteúdos por matéria  
