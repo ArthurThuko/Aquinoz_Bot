@@ -32,7 +32,7 @@ def processar_mensagem(msg):
             return
 
         elif texto == "/menu":
-            send_message_async(chat_id, f"Materia Selecionada: {materia_nome}\n\nEscolha uma opcao:", MENU_PRINCIPAL)
+            send_message_async(chat_id, f"Materia Selecionada: <b>{materia_nome}</b>\n\nEscolha uma opcao:", MENU_PRINCIPAL)
             return
 
         # 🧠 NOVO FLUXO: Ativa o estado de criação usando o Sentinela -1
@@ -60,7 +60,7 @@ def processar_mensagem(msg):
         elif texto.startswith("/add "):
             nome = texto.replace("/add ", "").strip()
             db.add(Materia(nome=nome, user_id=user.id)); db.commit()
-            send_message_async(chat_id, f"Materia {nome} criada! Selecione em /materias", MENU_PRINCIPAL)
+            send_message_async(chat_id, f"Materia {nome} criada! Selecione em <b>📚 Minhas Matérias</b>", MENU_PRINCIPAL)
             return
 
         elif texto.startswith("/use "):
@@ -91,22 +91,19 @@ def processar_mensagem(msg):
                 botoes_lista = []
 
                 for m in mats:
+                    # Uma única linha por matéria: [ Nome ] [ ✏️ ] [ 🗑️ ]
                     botoes_lista.append([
-                        {"text": m.nome, "callback_data": f"/use {m.nome}"}
-                    ])
-                    botoes_lista.append([
+                        {"text": f"📚 {m.nome}", "callback_data": f"/use {m.nome}"},
                         {"text": "✏️", "callback_data": f"/edit {m.id}"},
                         {"text": "🗑️", "callback_data": f"/confirm_delete {m.id}"}
                     ])
 
-                botoes = {
-                    "inline_keyboard": botoes_lista
-                }
-                send_message(chat_id, "Suas materias salvas:", botoes)
+                # Adiciona o botão de voltar ou fechar no fim para elegância
+                botoes_lista.append([{"text": "⬅️ Voltar ao Menu", "callback_data": "/menu"}])
+
+                send_message(chat_id, "<b>📂 Suas Disciplinas</b>\n<i>Selecione para estudar ou use os ícones para gerenciar:</i>", {"inline_keyboard": botoes_lista})
             else:
-                send_message(
-                    chat_id, "Voce ainda nao tem materias. Use /add NomeDaMateria"
-                )
+                send_message(chat_id, "📭 Você ainda não tem matérias.\nClique em <b>➕ Nova Matéria</b> para começar!", MENU_PRINCIPAL)
             return
 
         elif texto.startswith("/delete "):
@@ -157,7 +154,7 @@ def processar_mensagem(msg):
                 sessao.editando_materia_id = None
                 db.commit()
                 # 🎯 CORRIGIDO: </b> com barra fechando a tag corretamente
-                send_message_async(chat_id, f"✅ Matéria <b>{nome_materia}</b> criada com sucesso! Selecione em /materias", MENU_PRINCIPAL)
+                send_message_async(chat_id, f"✅ Matéria <b>{nome_materia}</b> criada com sucesso! Selecione em <b>📚 Minhas Matérias</b>", MENU_PRINCIPAL)
             else:
                 # Caso contrário, está EDITANDO uma matéria existente
                 m = db.query(Materia).filter_by(
@@ -176,7 +173,7 @@ def processar_mensagem(msg):
 
         # --- BLOQUEIO DE SEGURANÇA ---
         if not sessao.materia_ativa:
-            send_message_async(chat_id, "⚠️ Selecione uma materia primeiro em /materias", MENU_PRINCIPAL)
+            send_message_async(chat_id, "⚠️ Selecione uma materia primeiro em <b>📚 Minhas Matérias</b>", MENU_PRINCIPAL)
             return
 
         # 5. Recepção de Arquivos (PDF)
@@ -238,7 +235,6 @@ def processar_mensagem(msg):
                 pass
         
         elif texto == "/gerar_questoes":
-            send_message_async(chat_id, "📝 Analisando seu material para bolar as questões, aguarde...")
             threading.Thread(target=gerar_questoes, args=(chat_id, sessao.materia_ativa)).start()
             
         elif texto.strip().endswith("?"):

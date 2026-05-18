@@ -273,20 +273,26 @@ def responder_pergunta(chat_id, materia_id, pergunta):
     """Busca contexto no banco e responde dúvida do aluno."""
     db = SessionLocal()
     try:
-        materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(10).all()
+        # 💰 Otimizado para 4 blocos para economizar tokens
+        materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(4).all()
+        
         if not materiais:
-            send_message(chat_id, "📭 Sem material para consulta.")
+            from utils.menus import MENU_PRINCIPAL
+            send_message(chat_id, "📭 Não há material salvo nesta matéria para responder perguntas.", MENU_PRINCIPAL)
             return
 
         contexto = "\n---\n".join([c.texto for c in materiais])
         prompt = (
-            f"Use o CONTEXTO para responder a PERGUNTA do aluno amigavelmente.\n"
-            f"Destaque termos fundamentais em HTML <b>.\n\nCONTEXTO:\n{contexto}"
+            "Responda a PERGUNTA usando apenas o CONTEXTO abaixo.\n"
+            "Seja direto e use HTML <b> para termos chave.\n\n"
+            f"CONTEXTO:\n{contexto}"
         )
         
         res, tokens = pedir_ia(prompt, pergunta)
         metricas.tokens += tokens
-        send_message(chat_id, f"<b>Resposta:</b>\n\n{limpar_texto(res)}")
+        
+        from utils.menus import MENU_PRINCIPAL
+        send_message(chat_id, f"<b>Resposta:</b>\n\n{limpar_texto(res)}", MENU_PRINCIPAL)
     finally:
         db.close()
 
@@ -295,9 +301,18 @@ def gerar_questoes(chat_id, materia_id):
     """Cria um teste de múltipla escolha baseado no material salvo."""
     db = SessionLocal()
     try:
+        # 1. Verifica se há materiais
         materiais = db.query(Conteudo).filter_by(materia_id=materia_id).all()
-        if not materiais: return
         
+        if not materiais:
+            from utils.menus import MENU_PRINCIPAL
+            send_message(chat_id, "📭 Sua matéria está vazia. Envie textos, PDFs ou links para que eu possa gerar questões!", MENU_PRINCIPAL)
+            return
+        
+        # 2. FEEDBACK: Só aparece se houver material para processar
+        send_message(chat_id, "📝 Analisando seu material para bolar as questões, aguarde...")
+
+        # 3. Lógica da IA
         amostra = random.sample(materiais, min(len(materiais), 4))
         texto_base = "\n\n".join([c.texto for c in amostra])
         
@@ -321,11 +336,20 @@ def gerar_gabarito_rag(chat_id, materia_id, texto_questoes):
     db = SessionLocal()
     try:
         materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(10).all()
+        
+        # ✨ CORREÇÃO: Verificação de segurança caso o material suma durante o processo
+        if not materiais:
+            from utils.menus import MENU_PRINCIPAL
+            send_message(chat_id, "⚠️ Não encontrei os materiais de base para gerar o gabarito.", MENU_PRINCIPAL)
+            return
+
         contexto = "\n---\n".join([c.texto for c in materiais])
         
         prompt = f"Gere o gabarito oficial com base no CONTEXTO abaixo:\n\n{contexto}\n\nQUESTÕES:\n{texto_questoes}"
         res, tokens = pedir_ia(prompt, "")
         metricas.tokens += tokens
-        send_message(chat_id, f"🎯 <b>Gabarito Oficial Comentado:</b>\n\n{limpar_texto(res)}")
+        
+        from utils.menus import MENU_PRINCIPAL
+        send_message(chat_id, f"🎯 <b>Gabarito Oficial Comentado:</b>\n\n{limpar_texto(res)}", MENU_PRINCIPAL)
     finally:
         db.close()

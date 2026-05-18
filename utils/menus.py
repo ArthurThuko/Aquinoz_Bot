@@ -7,17 +7,36 @@ MENU_PRINCIPAL = {
 }
 
 TEXTO_AJUDA = (
-    "<b>💡 O SEGREDO DO FUNCIONAMENTO</b>\n\n"
-    "Eu sou um <b>assistente de organização</b>, não um criador de conteúdo. "
-    "<u>Não consigo fazer nada sem que você envie a matéria primeiro.</u> "
-    "Eu não invento informações; eu processo o que você me manda para facilitar seu estudo.\n\n"
-    "<b>❓ COMO FALAR COMIGO?</b>\n"
-    "• <b>Perguntas:</b> Termine qualquer frase com <b>'?'</b>. Eu vou vasculhar seus textos salvos.\n"
-    "• <b>Comandos:</b> Qualquer mensagem que comece com <code>/</code>.\n"
-    "• <b>Conteúdo:</b> Tudo o que digitar (que não termine com '?' e sem /) será <b>salvo automaticamente</b>.\n\n"
-    "<b>🚀 PASSO A PASSO RÁPIDO</b>\n"
-    "1. Use <code>/add Nome</code> para criar a disciplina.\n"
-    "2. Em <b>Minhas Matérias</b>, selecione a que deseja alimentar.\n"
-    "3. Mande textos, links, PDFs ou imagens.\n"
-    "4. Use o <b>/menu</b> para gerar resumos e testes."
+    "<b>🧠 AQUINOZ: SEU CÉREBRO EXTERNO</b>\n"
+    "────────────────────────\n"
+    "Eu sou uma <b>extensão da sua memória</b>. Eu processo seus arquivos "
+    "para que você não precise reler tudo do zero. Eu aprendo com o que você me envia.\n\n"
+
+    "<b>📱 NAVEGAÇÃO RÁPIDA</b>\n"
+    "• <b>Botão de Menu:</b> Ao lado do campo de digitar, existe um ícone de <b>[Menu]</b> ou <b>[Quadradinho]</b>. "
+    "Ele abre o painel principal de qualquer lugar da conversa.\n"
+    "• <b>Onde estou?:</b> Para confirmar qual matéria está ativa, basta abrir o <b>Menu</b>. O nome dela será sempre a <b>primeira informação</b> no topo da mensagem.\n\n"
+
+    "<b>📥 ALIMENTAÇÃO AUTOMÁTICA</b>\n"
+    "• <b>Basta Enviar:</b> Não precisa de comandos para salvar. Envie <b>Texto, Link, PDF ou Imagem</b> "
+    "a qualquer momento e eu salvarei automaticamente na matéria que estiver ativa.\n\n"
+
+    "<b>💡 DICA DE OURO: GRANULARIDADE</b>\n"
+    "• <b>Separe os Temas:</b> Para melhor eficiência, evite matérias genéricas. Em vez de 'Matemática', "
+    "crie uma para <b>'Álgebra'</b> e outra para <b>'Geometria'</b>. "
+    "Quanto mais focado o material, <b>mais precisas</b> serão minhas respostas!\n\n"
+
+    "<b>📊 FERRAMENTAS DE ESTUDO</b>\n"
+    "• <b>Resumir:</b> Transforma o material em tópicos didáticos com exemplos.\n"
+    "• <b>Questões:</b> Gera testes de fixação baseados no seu material.\n"
+    "• <b>Dúvida Direta:</b> Digite sua pergunta e termine com <b>'?'</b>.\n\n"
+    
+    "<b>🚀 PASSO A PASSO</b>\n"
+    "1️⃣ Use <b>➕ Nova Matéria</b> para criar um tópico.\n"
+    "2️⃣ Em <b>📚 Minhas Matérias</b>, selecione a desejada.\n"
+    "3️⃣ Envie o conteúdo (PDF, Link ou Texto).\n"
+    "4️⃣ Use o <b>📊 Resumir</b> para gerar seu guia de estudos.\n\n"
+
+    "────────────────────────\n"
+    "<i>Foco no estudo, eu cuido da organização!</i>"
 )
