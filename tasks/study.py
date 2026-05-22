@@ -1,3 +1,4 @@
+# tasks/study.py
 import re
 import random
 import logging
@@ -9,7 +10,6 @@ from services.telegram import send_message, send_voice
 from services.ai_assistant import pedir_ia
 from core.telemetry import telemetria, metricas
 from utils.text_helpers import limpar_texto
-from tasks.media import pre_gerar_audio_resumo
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,6 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
             gabarito = match.group(1).upper()
         else:
             logger.warning("⚠️ IA não retornou gabarito corretamente")
-            # fallback inteligente (não fixa sempre A)
             import random
             gabarito = random.choice(["A", "B"])
 
@@ -116,8 +115,18 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
         # 🔥 REMOVE SOBRAS
         res = re.sub(r"\n{3,}", "\n\n", res).strip()
 
-        # Gatilho de Áudio
-        threading.Thread(target=pre_gerar_audio_resumo, args=(chat_id, res)).start()
+        # 🎯 CHAMADA DE ÁUDIO DINÂMICA (À PROVA DE ERROS DE NOMEAÇÃO)
+        try:
+            import tasks.media as media_module
+            # Busca a função independente de ela se chamar task_gerar_audio ou pre_gerar_audio_resumo
+            funcao_audio = getattr(media_module, 'task_gerar_audio', None) or getattr(media_module, 'pre_gerar_audio_resumo', None)
+            
+            if funcao_audio:
+                threading.Thread(target=funcao_audio, args=(chat_id, materia_id, res)).start()
+            else:
+                logger.error("❌ Nenhuma função de geração de áudio foi encontrada em tasks/media.py")
+        except Exception as audio_err:
+            logger.error(f"⚠️ Falha ao inicializar a thread de voz: {audio_err}")
         
         botoes = [[{"text": "🔊 Ouvir este resumo", "callback_data": "/audio_resumo"}]]
 
@@ -137,9 +146,7 @@ def gerar_resumo(chat_id, materia_id, pagina=1):
         db.close()
 
 def processar_resposta_desafio(chat_id, materia_id, proxima_pagina, escolha, gabarito):
-    """
-    Avalia a resposta do quiz e prossegue para a próxima página.
-    """
+    """Avalia a resposta do quiz e prossegue para a próxima página."""
     if escolha == gabarito:
         feedback = random.choice(FEEDBACKS_ACERTO)
         msg_completa = f"✨ <b>{feedback}</b>\n\nCarregando próximo bloco..."
@@ -149,6 +156,7 @@ def processar_resposta_desafio(chat_id, materia_id, proxima_pagina, escolha, gab
         
     send_message(chat_id, msg_completa)
     gerar_resumo(chat_id, materia_id, proxima_pagina)
+
 
 # --- GESTÃO DE CONTEÚDO (Visual Estilizado) ---
 
@@ -165,7 +173,6 @@ def listar_conteudos(chat_id, user_id, materia_id):
         botoes = []
         for i, c in enumerate(conteudos, 1):
             icone = "📄" if c.tipo == "pdf" else "🖼️" if c.tipo == "imagem" else "📝"
-            # Preview curto para o botão
             preview = c.texto[:25].replace("\n", " ").strip() + "..."
             
             botoes.append([
@@ -193,7 +200,6 @@ def ver_conteudo(chat_id, user_id, conteudo_id):
 
         texto_limpo = limpar_texto(c.texto)
         
-        # Visual de Card Profissional
         card = (
             f"📖 <b>Leitura de Material</b>\n"
             f"────────────────────\n\n"
@@ -209,36 +215,6 @@ def ver_conteudo(chat_id, user_id, conteudo_id):
             ]
         }
         send_message(chat_id, card, botoes)
-    finally:
-        db.close()
-
-def salvar_conteudo(chat_id, materia_id, payload):
-    """
-    Recebe texto ou link, extrai dados se necessário, 
-    fatiando em chunks antes de salvar.
-    """
-    db = SessionLocal()
-    try:
-        tipo = "link" if payload.startswith("http") else "texto"
-        
-        if tipo == "link":
-            send_message(chat_id, "🔗 Acessando o link para leitura...")
-            texto = extrair_texto_da_url(payload)
-            if not texto or len(texto.strip()) < 10:
-                send_message(chat_id, "⚠️ Este site bloqueia leitores automáticos.")
-                return
-        else:
-            texto = payload
-
-        if texto:
-            # Chunking para manter blocos processáveis pela IA
-            pedacos = chunk_text(texto, max_chars=1000, overlap=100)
-            for p in pedacos:
-                db.add(Conteudo(texto=p, tipo=tipo, materia_id=materia_id))
-            db.commit()
-            send_message(chat_id, f"✅ Absorvido! ({len(pedacos)} blocos arquivados)")
-    except Exception as e:
-        logger.error(f"Erro ao salvar: {e}")
     finally:
         db.close()
 
@@ -266,6 +242,7 @@ def confirmar_delete_conteudo(chat_id, conteudo_id):
     }
     send_message(chat_id, "Tem certeza que deseja apagar este pedaço de material?", botoes)
 
+
 # --- MÉTODOS DE INTELIGÊNCIA ARTIFICIAL (RAG) ---
 
 @telemetria
@@ -273,7 +250,6 @@ def responder_pergunta(chat_id, materia_id, pergunta):
     """Busca contexto no banco e responde dúvida do aluno."""
     db = SessionLocal()
     try:
-        # 💰 Otimizado para 4 blocos para economizar tokens
         materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(4).all()
         
         if not materiais:
@@ -301,7 +277,6 @@ def gerar_questoes(chat_id, materia_id):
     """Cria um teste de múltipla escolha baseado no material salvo."""
     db = SessionLocal()
     try:
-        # 1. Verifica se há materiais
         materiais = db.query(Conteudo).filter_by(materia_id=materia_id).all()
         
         if not materiais:
@@ -309,10 +284,8 @@ def gerar_questoes(chat_id, materia_id):
             send_message(chat_id, "📭 Sua matéria está vazia. Envie textos, PDFs ou links para que eu possa gerar questões!", MENU_PRINCIPAL)
             return
         
-        # 2. FEEDBACK: Só aparece se houver material para processar
         send_message(chat_id, "📝 Analisando seu material para bolar as questões, aguarde...")
 
-        # 3. Lógica da IA
         amostra = random.sample(materiais, min(len(materiais), 4))
         texto_base = "\n\n".join([c.texto for c in amostra])
         
@@ -337,7 +310,6 @@ def gerar_gabarito_rag(chat_id, materia_id, texto_questoes):
     try:
         materiais = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.desc()).limit(10).all()
         
-        # ✨ CORREÇÃO: Verificação de segurança caso o material suma durante o processo
         if not materiais:
             from utils.menus import MENU_PRINCIPAL
             send_message(chat_id, "⚠️ Não encontrei os materiais de base para gerar o gabarito.", MENU_PRINCIPAL)

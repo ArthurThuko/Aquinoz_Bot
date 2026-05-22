@@ -1,124 +1,114 @@
 import os
 import re
-import time
 import logging
-import threading
-from services.telegram import send_message, send_voice
-from services.voice import gerar_audio_do_texto
+from models import SessionLocal, Conteudo
+from services.image_reader import extrair_texto_imagem
+from services.telegram import send_message
+from services.scraper import extrair_texto_da_url
+from services.chunker import chunk_text
+from services.pdf_reader import extrair_texto_pdf
 from core.telemetry import telemetria, metricas
-from utils.text_helpers import dividir_texto_em_partes
 
 logger = logging.getLogger(__name__)
 
-def extrair_topicos(texto_fatiado):
-    numeros = re.findall(r'^\s*(\d+)\.', texto_fatiado, re.MULTILINE)
-    if not numeros:
-        return " <i>(Continuação)</i>"
-    num_ints = sorted([int(n) for n in numeros])
-    min_topico, max_topico = num_ints[0], num_ints[-1]
-    if min_topico == max_topico:
-        return f" <b>(Tópico {min_topico})</b>"
-    return f" <b>(Tópicos {min_topico}-{max_topico})</b>"
 
-# --- LÓGICA DE PRE-GERAÇÃO (EAGER LOADING) ---
-def autodestruir_arquivo(path, timeout=60):
-    """Espera 60 segundos. Se o arquivo ainda existir (não foi ouvido), deleta."""
-    time.sleep(timeout)
-    if os.path.exists(path):
-        try:
-            os.remove(path)
-            logger.info(f"Lixeira: Arquivo {path} não utilizado apagado após {timeout}s.")
-        except Exception: pass
-
-def pre_gerar_audio_resumo(identificador, texto_completo):
-    """Gera silenciosamente a Parte 1 do áudio em background."""
+def higienizar_texto(texto: str) -> str:
+    """Corrige erros de encoding (latin-1/utf-8) e limpa espaços excessivos."""
+    if not texto:
+        return ""
     try:
-        partes = dividir_texto_em_partes(texto_completo)
-        if partes:
-            # Salva com o índice 'pre'
-            path = gerar_audio_do_texto(partes[0], identificador, indice="pre")
-            if path:
-                # Inicia a contagem regressiva de destruição
-                threading.Thread(target=autodestruir_arquivo, args=(path,)).start()
-    except Exception as e:
-        logger.error(f"Erro na pré-geração: {e}")
-# ---------------------------------------------
+        texto = texto.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass  # Texto já está em UTF-8 ou não é conversível; segue em frente
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
+
+def _salvar_pedacos(db, pedacos: list[str], tipo: str, materia_id: int) -> None:
+    """Persiste os chunks no banco dentro de uma sessão já aberta."""
+    for p in pedacos:
+        db.add(Conteudo(texto=p, tipo=tipo, materia_id=materia_id))
+    db.commit()
+
 
 @telemetria
-def processar_parte_audio(chat_id, path, parte_atual, total_partes, topicos_str):
+def processar_pdf(chat_id: int, materia_id: int, filepath: str) -> None:
+    db = SessionLocal()
     try:
-        if path:
-            if total_partes > 1:
-                msg_bonita = (
-                    f"🎧 <b>Áudio {parte_atual} de {total_partes}</b>{topicos_str}\n"
-                    f"<i>Pode dar o play! A próxima parte já está sendo preparada...</i> ⚡"
-                )
-                send_message(chat_id, msg_bonita)
-            else:
-                send_message(chat_id, f"🎧 <b>Seu áudio está pronto!</b>{topicos_str} Bom estudo. 🚀")
-            
-            if hasattr(metricas, 'kb'):
-                metricas.kb += os.path.getsize(path) / 1024
-                
-            send_voice(chat_id, path)
-            
-            if os.path.exists(path): 
-                os.remove(path)
-        else:
-            send_message(chat_id, f"⚠️ Tive um problema ao gerar a parte {parte_atual} do seu áudio.")
-    except Exception as e:
-        logger.error(f"Erro Áudio Parte {parte_atual}: {e}")
+        send_message(chat_id, "📄 Lendo e fatiando seu PDF para o banco de dados...")
+        texto = higienizar_texto(extrair_texto_pdf(filepath))
 
-def task_gerar_audio(chat_id, user_id, texto):
-    try:
-        if not texto or "/audio_" in texto or "Analisando seus" in texto:
+        if not texto or len(texto) < 10:
+            send_message(chat_id, "❌ Não consegui extrair texto legível deste PDF.")
             return
-            
-        partes_texto = dividir_texto_em_partes(texto)
-        total_partes = len(partes_texto)
 
-        if total_partes > 1:
-            send_message(chat_id, f"Sintetizando a voz... Fatiamos em <b>{total_partes} partes menores</b> para a primeira chegar super rápido! 🏃💨")
-        else:
-            send_message(chat_id, "🎙️ Colocando as cordas vocais para aquecer... gerando seu áudio!")
+        metricas.kb += len(texto.encode("utf-8")) / 1024
+        pedacos = chunk_text(texto, max_chars=1000, overlap=100)
+        _salvar_pedacos(db, pedacos, "pdf", materia_id)
+        send_message(chat_id, f"✅ PDF absorvido! {len(pedacos)} blocos de conhecimento adicionados.")
 
-        resultados = {}
-        # Caminho exato de onde o arquivo pre-gerado estaria salvo
-        path_pre_gerado = f"temp_voice_{user_id}_parte_pre.mp3"
-        
-        def worker_geracao(texto_fatiado, indice):
-            # Se for a Parte 1 e o arquivo do Eager Loading já existir no disco:
-            if indice == 1 and os.path.exists(path_pre_gerado):
-                # Labor Illusion: Segura 2 segundinhos para o usuário não assustar com a velocidade
-                time.sleep(2)
-                path = path_pre_gerado
-            else:
-                # Se não existir (passou 60s ou é a parte 2, 3...), gera normal na Microsoft
-                path = gerar_audio_do_texto(texto_fatiado, user_id, indice=indice)
-                
-            topicos_str = extrair_topicos(texto_fatiado)
-            resultados[indice] = {"path": path, "topicos_str": topicos_str}
-
-        threads_geracao = []
-        
-        # Dispara a Thread 1
-        t_primeira = threading.Thread(target=worker_geracao, args=(partes_texto[0], 1))
-        t_primeira.start()
-        threads_geracao.append(t_primeira)
-        
-        time.sleep(0.2) 
-
-        # Dispara as outras Threads
-        for i, texto_fatiado in enumerate(partes_texto[1:], start=2):
-            t = threading.Thread(target=worker_geracao, args=(texto_fatiado, i))
-            t.start()
-            threads_geracao.append(t)
-
-        # Consome em pipeline
-        for i, t in enumerate(threads_geracao, start=1):
-            t.join() 
-            dados = resultados.get(i, {})
-            processar_parte_audio(chat_id, dados.get("path"), i, total_partes, dados.get("topicos_str", ""))
-            
     except Exception as e:
-        logger.error(f"Erro Áudio Orquestrador: {e}")
+        logger.error(f"Erro ao processar PDF (chat={chat_id}): {e}", exc_info=True)
+        send_message(chat_id, "❌ Ocorreu um erro interno ao processar o PDF.")
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        db.close()
+
+
+@telemetria
+def processar_imagem(chat_id: int, materia_id: int, filepath: str) -> None:
+    db = SessionLocal()
+    try:
+        send_message(chat_id, "🖼️ Extraindo texto da imagem...")
+        texto = higienizar_texto(extrair_texto_imagem(filepath))
+
+        if not texto:
+            send_message(chat_id, "❌ Não encontrei nenhum texto nesta imagem.")
+            return
+
+        metricas.kb += len(texto.encode("utf-8")) / 1024
+        pedacos = chunk_text(texto, max_chars=1000, overlap=100)
+        _salvar_pedacos(db, pedacos, "imagem", materia_id)
+        send_message(chat_id, f"✅ Imagem processada! {len(pedacos)} blocos adicionados.")
+
+    except Exception as e:
+        logger.error(f"Erro ao processar imagem (chat={chat_id}): {e}", exc_info=True)
+        send_message(chat_id, "❌ Ocorreu um erro interno ao processar a imagem.")
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        db.close()
+
+
+@telemetria
+def salvar_conteudo(chat_id: int, materia_id: int, payload: str) -> None:
+    db = SessionLocal()
+    try:
+        tipo = "link" if payload.startswith(("http://", "https://")) else "texto"
+
+        if tipo == "link":
+            send_message(chat_id, "🔗 Acessando o link para leitura...")
+            texto_bruto = extrair_texto_da_url(payload)
+            if not texto_bruto or len(texto_bruto.strip()) < 10:
+                send_message(
+                    chat_id,
+                    "⚠️ Este site bloqueia leitores. Por favor, cole o texto manualmente.",
+                )
+                return
+        else:
+            texto_bruto = payload
+
+        texto = higienizar_texto(texto_bruto)
+        if not texto:
+            return
+
+        metricas.kb += len(texto.encode("utf-8")) / 1024
+        pedacos = chunk_text(texto, max_chars=1000, overlap=100)
+        _salvar_pedacos(db, pedacos, tipo, materia_id)
+        send_message(chat_id, f"✅ Absorvido! ({len(pedacos)} blocos arquivados na matéria)")
+
+    except Exception as e:
+        logger.error(f"Erro ao salvar conteúdo (chat={chat_id}): {e}", exc_info=True)
+    finally:
+        db.close()

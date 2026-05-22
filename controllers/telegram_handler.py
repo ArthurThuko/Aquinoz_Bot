@@ -8,8 +8,11 @@ from config import BASE_URL
 from tasks.ingestion import processar_imagem, processar_pdf, salvar_conteudo
 from tasks.study import confirmar_delete_conteudo, deletar_conteudo, gerar_resumo, gerar_questoes, listar_conteudos, responder_pergunta, gerar_gabarito_rag, ver_conteudo
 from core.auth import obter_sessao_usuario
-from tasks.media import task_gerar_audio
+from services.tts import gerar_audio_do_texto
 from utils.menus import MENU_PRINCIPAL, TEXTO_AJUDA
+
+# 🎙️ IMPORT DOS SERVIÇOS DE VOZ E DETECÇÃO DE COMANDO
+from services.stt import transcrever_audio, converter_fala_em_comando
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +20,67 @@ logger = logging.getLogger(__name__)
 def send_message_async(chat_id, text, reply_markup=None):
     threading.Thread(target=send_message, args=(chat_id, text, reply_markup)).start()
 
+# Task assíncrona que processa o áudio enviado pelo usuário
+def task_processar_voice(chat_id, materia_ativa, file_id):
+    try:
+        # 1. Download do arquivo de voz (.ogg) enviado pelo Telegram
+        file_info = requests.get(f"{BASE_URL}/getFile?file_id={file_id}").json()
+        file_path = file_info["result"]["file_path"]
+        
+        token = BASE_URL.split('bot')[1]
+        file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        
+        local_path = f"temp_voice_{file_id}.ogg"
+        with open(local_path, "wb") as f:
+            f.write(requests.get(file_url).content)
+            
+        # 2. Transcrição via Groq (Whisper) + Limpeza local de ruídos
+        texto_transcrito = transcrever_audio(local_path)
+        
+        # Garante a remoção do arquivo temporário do disco
+        if os.path.exists(local_path):
+            os.remove(local_path)
+            
+        if not texto_transcrito:
+            send_message_async(chat_id, "❌ Não consegui compreender o áudio. Pode tentar falar novamente?")
+            return
+            
+        # Feedback em tempo real do que o bot ouviu
+        send_message_async(chat_id, f"🎙️ <b>Ouvi:</b> <i>\"{texto_transcrito}\"</i>")
+        
+        # 3. Mapeamento de Intenção (Filtro de Comandos por Voz)
+        comando_ou_texto = converter_fala_em_comando(texto_transcrito)
+        
+        # Se interceptou um comando (/resumir, /gerar_questoes...)
+        if comando_ou_texto.startswith("/"):
+            mock_msg = {
+                "chat": {"id": chat_id},
+                "text": comando_ou_texto
+            }
+            # Reintroduz no fluxo de decisões do bot simulando entrada de texto
+            processar_mensagem(mock_msg)
+            return
+
+        # 4. Caso contrário, segue o tratamento padrão de Texto/Pergunta
+        if comando_ou_texto.strip().endswith("?"):
+            send_message_async(chat_id, "🔎 Consultando sua base de conhecimento para encontrar a resposta...")
+            responder_pergunta(chat_id, materia_ativa, comando_ou_texto)
+        else:
+            send_message_async(chat_id, "💾 Conteúdo recebido via áudio! Salvando na base de estudos...")
+            salvar_conteudo(chat_id, materia_ativa, comando_ou_texto)
+            
+    except Exception as e:
+        logger.error(f"Erro na task de áudio: {e}")
+        send_message_async(chat_id, "Ocorreu um erro ao processar sua mensagem de voz.")
+
+
 def processar_mensagem(msg):
     chat_id = msg["chat"]["id"]
     texto = msg.get("text", "")
     
     db = SessionLocal()
     try:
-        # 1. Autenticação e Sessão (Delegado para o módulo core)
+        # 1. Autenticação e Sessão
         user, sessao, materia_nome = obter_sessao_usuario(db, chat_id)
 
         # 2. Comandos Básicos e Navegação
@@ -35,7 +92,7 @@ def processar_mensagem(msg):
             send_message_async(chat_id, f"Materia Selecionada: <b>{materia_nome}</b>\n\nEscolha uma opcao:", MENU_PRINCIPAL)
             return
 
-        # 🧠 NOVO FLUXO: Ativa o estado de criação usando o Sentinela -1
+        # Ativa o estado de criação usando o Sentinela -1
         elif texto == "/nova_materia":
             sessao.editando_materia_id = -1
             db.commit()
@@ -47,7 +104,7 @@ def processar_mensagem(msg):
             aviso = "🎙️ Colocando as cordas vocais para aquecer..." if "resumo" in texto else "🎙️ Preparando o áudio das questões..."
             send_message_async(chat_id, aviso)
             conteudo = msg.get("conteudo_da_bolha", "")
-            threading.Thread(target=task_gerar_audio, args=(chat_id, user.id, conteudo)).start()
+            threading.Thread(target=gerar_audio_do_texto, args=(chat_id, user.id, conteudo)).start()
             return
 
         elif texto == "/ver_gabarito":
@@ -56,7 +113,7 @@ def processar_mensagem(msg):
             threading.Thread(target=gerar_gabarito_rag, args=(chat_id, sessao.materia_ativa, conteudo)).start()
             return
 
-        # Mantido apenas como fallback seguro por comando
+        # Fallback seguro por comando manual
         elif texto.startswith("/add "):
             nome = texto.replace("/add ", "").strip()
             db.add(Materia(nome=nome, user_id=user.id)); db.commit()
@@ -89,18 +146,13 @@ def processar_mensagem(msg):
             mats = db.query(Materia).filter_by(user_id=user.id).all()
             if mats:
                 botoes_lista = []
-
                 for m in mats:
-                    # Uma única linha por matéria: [ Nome ] [ ✏️ ] [ 🗑️ ]
                     botoes_lista.append([
                         {"text": f"📚 {m.nome}", "callback_data": f"/use {m.nome}"},
                         {"text": "✏️", "callback_data": f"/edit {m.id}"},
                         {"text": "🗑️", "callback_data": f"/confirm_delete {m.id}"}
                     ])
-
-                # Adiciona o botão de voltar ou fechar no fim para elegância
                 botoes_lista.append([{"text": "⬅️ Voltar ao Menu", "callback_data": "/menu"}])
-
                 send_message(chat_id, "<b>📂 Suas Disciplinas</b>\n<i>Selecione para estudar ou use os ícones para gerenciar:</i>", {"inline_keyboard": botoes_lista})
             else:
                 send_message(chat_id, "📭 Você ainda não tem matérias.\nClique em <b>➕ Nova Matéria</b> para começar!", MENU_PRINCIPAL)
@@ -109,14 +161,11 @@ def processar_mensagem(msg):
         elif texto.startswith("/delete "):
             materia_id = int(texto.split(" ")[1])
             m = db.query(Materia).filter_by(user_id=user.id, id=materia_id).first()
-
             if m:
                 if sessao.materia_ativa == m.id:
                     sessao.materia_ativa = None
-
                 db.delete(m)
                 db.commit()
-
                 send_message(chat_id, "🗑️ Matéria excluída com sucesso!", MENU_PRINCIPAL)
             else:
                 send_message(chat_id, "Matéria não encontrada.")
@@ -124,16 +173,12 @@ def processar_mensagem(msg):
         
         elif texto.startswith("/confirm_delete "):
             materia_id = int(texto.split(" ")[1])
-
             botoes = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Sim", "callback_data": f"/delete {materia_id}"},
-                        {"text": "❌ Não", "callback_data": "/materias"}
-                    ]
-                ]
+                "inline_keyboard": [[
+                    {"text": "✅ Sim", "callback_data": f"/delete {materia_id}"},
+                    {"text": "❌ Não", "callback_data": "/materias"}
+                ]]
             }
-
             send_message(chat_id, "Tem certeza que deseja excluir esta matéria?", botoes)
             return
         
@@ -141,27 +186,19 @@ def processar_mensagem(msg):
             materia_id = int(texto.split(" ")[1])
             sessao.editando_materia_id = materia_id
             db.commit()
-
             send_message(chat_id, "✏️ Digite o novo nome da matéria:")
             return
 
-# 🧠 MÁQUINA DE ESTADOS: Captura o texto para Criação ou Edição
+        # MÁQUINA DE ESTADOS: Captura o texto para Criação ou Edição
         elif sessao.editando_materia_id and not texto.startswith("/"):
             if sessao.editando_materia_id == -1:
-                # Caso seja -1, significa que o usuário está CRIANDO uma nova matéria
                 nome_materia = texto.strip()
                 db.add(Materia(nome=nome_materia, user_id=user.id))
                 sessao.editando_materia_id = None
                 db.commit()
-                # 🎯 CORRIGIDO: </b> com barra fechando a tag corretamente
                 send_message_async(chat_id, f"✅ Matéria <b>{nome_materia}</b> criada com sucesso! Selecione em <b>📚 Minhas Matérias</b>", MENU_PRINCIPAL)
             else:
-                # Caso contrário, está EDITANDO uma matéria existente
-                m = db.query(Materia).filter_by(
-                    user_id=user.id,
-                    id=sessao.editando_materia_id
-                ).first()
-
+                m = db.query(Materia).filter_by(user_id=user.id, id=sessao.editando_materia_id).first()
                 if m:
                     m.nome = texto.strip()
                     sessao.editando_materia_id = None
@@ -174,6 +211,13 @@ def processar_mensagem(msg):
         # --- BLOQUEIO DE SEGURANÇA ---
         if not sessao.materia_ativa:
             send_message_async(chat_id, "⚠️ Selecione uma materia primeiro em <b>📚 Minhas Matérias</b>", MENU_PRINCIPAL)
+            return
+
+        # 🎙️ 4. RECEPÇÃO DE MENSAGEM DE VOZ
+        if "voice" in msg:
+            send_message_async(chat_id, "🎙️ Ouvindo seu áudio... Processando transcrição.")
+            voice_id = msg["voice"]["file_id"]
+            threading.Thread(target=task_processar_voice, args=(chat_id, sessao.materia_ativa, voice_id)).start()
             return
 
         # 5. Recepção de Arquivos (PDF)
@@ -200,13 +244,10 @@ def processar_mensagem(msg):
         # 6. Recepção de Imagens
         if "photo" in msg:
             send_message_async(chat_id, "🖼️ Recebi a imagem! Extraindo o texto...")
-
             photo = msg["photo"][-1]
             file_id = photo["file_id"]
-
             file_info = requests.get(f"{BASE_URL}/getFile?file_id={file_id}").json()
             file_path = file_info["result"]["file_path"]
-
             token = BASE_URL.split('bot')[1]
             file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
 
@@ -214,14 +255,10 @@ def processar_mensagem(msg):
             with open(local_path, "wb") as f:
                 f.write(requests.get(file_url).content)
 
-            threading.Thread(
-                target=processar_imagem,
-                args=(chat_id, sessao.materia_ativa, local_path)
-            ).start()
-
+            threading.Thread(target=processar_imagem, args=(chat_id, sessao.materia_ativa, local_path)).start()
             return
 
-        # 7 Rotas de Estudo (IA e Ingestão de Texto)
+        # 7. Rotas de Estudo (IA e Ingestão de Texto)
         if texto == "/resumir":
             threading.Thread(target=gerar_resumo, args=(chat_id, sessao.materia_ativa, 1)).start()
             return
