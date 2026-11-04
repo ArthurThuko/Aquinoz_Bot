@@ -9,6 +9,7 @@ from services.scraper import extrair_texto_da_url
 from services.telegram import send_message, send_voice
 from services.ai_assistant import pedir_ia
 from core.telemetry import telemetria, metricas
+from services.chunker import limpar_overlaps
 from utils.text_helpers import limpar_texto
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,6 @@ def processar_resposta_desafio(chat_id, materia_id, proxima_pagina, escolha, gab
 # --- GESTÃO DE CONTEÚDO (Visual Estilizado) ---
 
 def listar_conteudos(chat_id, user_id, materia_id):
-    """Exibe a lista de materiais em formato de índice numerado."""
     db = SessionLocal()
     try:
         conteudos = db.query(Conteudo).filter_by(materia_id=materia_id).order_by(Conteudo.id.asc()).all()
@@ -173,7 +173,8 @@ def listar_conteudos(chat_id, user_id, materia_id):
         botoes = []
         for i, c in enumerate(conteudos, 1):
             icone = "📄" if c.tipo == "pdf" else "🖼️" if c.tipo == "imagem" else "📝"
-            preview = c.texto[:25].replace("\n", " ").strip() + "..."
+            # Limpa overlap antes de gerar o preview
+            preview = limpar_overlaps(c.texto)[:40].replace("\n", " ").strip() + "..."
             
             botoes.append([
                 {"text": f"{icone} Bloco {i} | {preview}", "callback_data": f"/ver_conteudo {c.id}"}
@@ -184,12 +185,67 @@ def listar_conteudos(chat_id, user_id, materia_id):
             "────────────────────\n"
             "<i>Aqui estão os materiais processados. Clique para ler:</i>"
         )
-        
         send_message(chat_id, cabecalho, {"inline_keyboard": botoes})
     finally:
         db.close()
 
+
 def ver_conteudo(chat_id, user_id, conteudo_id):
+    """Exibe o texto completo de um bloco específico."""
+    db = SessionLocal()
+    try:
+        c = db.query(Conteudo).get(conteudo_id)
+        if not c:
+            send_message(chat_id, "Conteúdo não encontrado.")
+            return
+
+        texto_limpo = limpar_texto(limpar_overlaps(c.texto))
+
+        card = (
+            f"📖 <b>Leitura de Material</b>\n"
+            f"────────────────────\n\n"
+            f"{texto_limpo}\n\n"
+            f"────────────────────\n"
+            f"📎 <b>Tipo:</b> {c.tipo.upper()}"
+        )
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Excluir este Bloco", "callback_data": f"/confirm_del_ctd {c.id}"}],
+                [{"text": "⬅️ Voltar à Lista",     "callback_data": "/conteudos"}]
+            ]
+        }
+        send_message(chat_id, card, botoes)
+    finally:
+        db.close()
+    """Exibe o texto completo de um bloco específico."""
+    db = SessionLocal()
+    try:
+        c = db.query(Conteudo).get(conteudo_id)
+        if not c:
+            send_message(chat_id, "Conteúdo não encontrado.")
+            return
+
+        # Remove overlap antes de limpar o HTML — ordem importa
+        texto_sem_overlap = limpar_overlaps(c.texto)
+        texto_limpo = limpar_texto(texto_sem_overlap)
+
+        card = (
+            f"📖 <b>Leitura de Material</b>\n"
+            f"────────────────────\n\n"
+            f"{texto_limpo}\n\n"
+            f"────────────────────\n"
+            f"📎 <b>Tipo:</b> {c.tipo.upper()}"
+        )
+
+        botoes = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Excluir este Bloco", "callback_data": f"/confirm_del_ctd {c.id}"}],
+                [{"text": "⬅️ Voltar à Lista", "callback_data": "/conteudos"}]
+            ]
+        }
+        send_message(chat_id, card, botoes)
+    finally:
+        db.close()
     """Exibe o texto completo de um bloco específico."""
     db = SessionLocal()
     try:
